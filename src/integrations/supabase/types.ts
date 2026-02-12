@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           cash_flow: number | null
           city: string | null
+          cnpj: string | null
           created_at: string
           debt: number | null
           description: string | null
@@ -39,6 +40,7 @@ export type Database = {
         Insert: {
           cash_flow?: number | null
           city?: string | null
+          cnpj?: string | null
           created_at?: string
           debt?: number | null
           description?: string | null
@@ -60,6 +62,7 @@ export type Database = {
         Update: {
           cash_flow?: number | null
           city?: string | null
+          cnpj?: string | null
           created_at?: string
           debt?: number | null
           description?: string | null

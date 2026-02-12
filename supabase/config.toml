@@ -2,3 +2,6 @@ project_id = "puzmnyebboiupuaeufmd"
 
 [functions.ai-analyze]
 verify_jwt = false
+
+[functions.company-deep-dive]
+verify_jwt = false
