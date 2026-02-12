@@ -1,197 +1,75 @@
 
 
-# Plano: Traduzir Toda a Plataforma para Português
+# Filtro Geografico Brasil + Raio de Proximidade
 
-## Escopo
+## Contexto
 
-A plataforma M&A Intelligence está atualmente em **inglês**. Vamos traduzir toda a interface para **português brasileiro**. Identificamos textos em 7 arquivos principais:
+Atualmente o matching usa regioes globais (Brazil, Latin America, Europe, etc.) e o campo `location` das empresas e texto livre. Vamos transformar isso em um sistema geografico focado 100% no Brasil, com filtro por estado, cidade e raio de proximidade em km.
 
-### Arquivos a traduzir:
+## O que muda
 
-1. **src/pages/Auth.tsx** - Formulário de login/signup
-2. **src/pages/Dashboard.tsx** - Dashboard com métricas
-3. **src/pages/Companies.tsx** - Gestão de empresas
-4. **src/components/layout/AppSidebar.tsx** - Navegação lateral
-5. **src/pages/Matching.tsx** - Módulo de matching (parcialmente, já tem alguns textos em PT)
-6. **src/pages/DueDiligence.tsx** - Due diligence
-7. **src/pages/Valuation.tsx** - Valuation
-8. **src/pages/Contracts.tsx** - Geração de contratos
-9. **src/pages/Risk.tsx** - Análise de risco
-10. **src/pages/AdminUsers.tsx** - Gestão de usuários (admin)
+### 1. Banco de dados
+Adicionar colunas `state` (text) e `city` (text) na tabela `companies` para dados estruturados. Adicionar `latitude` e `longitude` (numeric) para calculo de distancia. Adicionar `geo_radius_km` e `geo_reference_city` na tabela `match_criteria`.
 
-## Tradução de Strings-Chave
+### 2. Cadastro de Empresas (Companies.tsx)
+- Substituir o campo livre "Localizacao" por dois selects: **Estado** (lista dos 26 estados + DF) e **Cidade** (input de texto)
+- Manter o campo `location` preenchido automaticamente como "Cidade, UF" para retrocompatibilidade
+- Adicionar um dicionario interno com coordenadas das ~100 maiores cidades brasileiras para auto-preencher lat/lng ao digitar a cidade
 
-### Auth.tsx
-- "Sign In" → "Entrar"
-- "Create Account" → "Criar Conta"
-- "Enter your credentials to access the platform" → "Digite suas credenciais para acessar a plataforma"
-- "Set up your account to get started" → "Configure sua conta para começar"
-- "Full Name" → "Nome Completo"
-- "Password" → "Senha"
-- "I am a" → "Sou um(a)"
-- "Buyer" → "Comprador"
-- "Seller" → "Vendedor"
-- "Advisor" → "Consultor"
-- "Don't have an account? Sign up" → "Não tem conta? Cadastre-se"
-- "Already have an account? Sign in" → "Já tem conta? Faça login"
-- "Account created!" → "Conta criada!"
-- "Please check your email to verify your account before signing in." → "Verifique seu email para confirmar sua conta antes de entrar."
-- "Please wait..." → "Aguarde..."
-- "Error" → "Erro"
+### 3. Matching (Matching.tsx)
+- Remover as regioes globais
+- Substituir por:
+  - **Estado**: filtro por estado brasileiro (ou "Todos")
+  - **Cidade de Referencia**: input para digitar a cidade base do usuario (ex: "Gravatai")
+  - **Raio de Busca**: slider de 10km a 500km (com opcao "Sem limite")
+- Pre-filtragem local usando formula de Haversine para calcular distancia entre a cidade de referencia e cada empresa
+- Empresas sem coordenadas sao incluidas com aviso
 
-### Dashboard.tsx
-- "Dashboard" → "Painel"
-- "Welcome back{...}. Role: {...}" → "Bem-vindo(a) de volta{...}. Cargo: {...}"
-- "Companies" → "Empresas"
-- "Manage company profiles and financials" → "Gerencie perfis de empresas e dados financeiros"
-- "Find compatible buyers and sellers" → "Encontre compradores e vendedores compatíveis"
-- "Automated document review" → "Análise automática de documentos"
-- "DCF and EBITDA analysis" → "Análise de DCF e EBITDA"
-- "Transaction predictions" → "Previsões de transações"
-- "Generate legal documents" → "Gere documentos legais"
-- "Comprehensive risk scoring" → "Pontuação de risco abrangente"
+### 4. Dicionario de cidades brasileiras
+Criar um arquivo `src/data/brazilian-cities.ts` com as ~150 principais cidades do Brasil, cada uma com nome, estado (UF) e coordenadas (lat/lng). Esse dicionario sera usado tanto no cadastro de empresas quanto no filtro de matching.
 
-### Companies.tsx
-- "Add Company" → "Adicionar Empresa"
-- "Edit Company" → "Editar Empresa"
-- "New Company" → "Nova Empresa"
-- "Name *" → "Nome *"
-- "Sector" → "Setor"
-- "Location" → "Localização"
-- "Size" → "Tamanho"
-- "Revenue ($)" → "Receita ($)"
-- "EBITDA ($)" → "EBITDA ($)"
-- "Cash Flow ($)" → "Fluxo de Caixa ($)"
-- "Debt ($)" → "Dívida ($)"
-- "Risk Level" → "Nível de Risco"
-- "Low" → "Baixo"
-- "Medium" → "Médio"
-- "High" → "Alto"
-- "Description" → "Descrição"
-- "Save..." / "Create" / "Update" → "Salvar..." / "Criar" / "Atualizar"
-- "Search companies..." → "Pesquisar empresas..."
-- "All Sectors" → "Todos os Setores"
-- "No companies found. Add your first company to get started." → "Nenhuma empresa encontrada. Adicione sua primeira empresa para começar."
-- "Edit" → "Editar"
-- "Delete" → "Deletar"
-- "Company created" / "Company updated" / "Company deleted" → "Empresa criada" / "Empresa atualizada" / "Empresa deletada"
+Cidades incluem todas as capitais + cidades com mais de 200k habitantes, cobrindo regioes como:
+- RS: Porto Alegre, Caxias do Sul, Pelotas, Canoas, Santa Maria, Gravatai, Novo Hamburgo...
+- SP: Sao Paulo, Campinas, Santos, Ribeirao Preto, Sorocaba...
+- RJ, MG, PR, SC, BA, PE, CE, etc.
 
-### AppSidebar.tsx
-- "Dashboard" → "Painel"
-- "Companies" → "Empresas"
-- "Matching" → "Matching"
-- "Due Diligence" → "Due Diligence"
-- "Valuation" → "Valuation"
-- "Strategy" → "Estratégia"
-- "Contracts" → "Contratos"
-- "Risk Analysis" → "Análise de Risco"
-- "Admin" → "Admin"
-- "User Management" → "Gestão de Usuários"
-- "Settings" → "Configurações"
-- "Sign Out" → "Sair"
+### 5. Edge function (ai-analyze)
+Atualizar o prompt de matching para informar a IA que todas as empresas sao brasileiras e incluir a distancia geografica como fator de avaliacao na dimensao `location_fit`.
 
-### Matching.tsx
-- "Buyer-Seller Matching" → "Matching Comprador-Vendedor"
-- "AI-powered acquisition matching engine with multi-dimensional analysis" → "Motor de matching de aquisições com inteligência artificial e análise multidimensional"
-- "Strategic Criteria" → "Critérios Estratégicos"
-- "Define the profile of your ideal acquisition target" → "Defina o perfil do seu alvo de aquisição ideal"
-- "Target Sector" → "Setor Alvo"
-- "Region" → "Região"
-- "Company Size" → "Tamanho da Empresa"
-- "Risk Tolerance" → "Tolerância ao Risco"
-- "Strategic Notes" → "Notas Estratégicas"
-- "Financial Parameters" → "Parâmetros Financeiros"
-- "Set revenue and profitability thresholds" → "Defina limites de receita e lucratividade"
-- "Min Revenue ($)" / "Max Revenue ($)" → "Receita Mín. ($)" / "Receita Máx. ($)"
-- "Min EBITDA ($)" / "Max EBITDA ($)" → "EBITDA Mín. ($)" / "EBITDA Máx. ($)"
-- "Pre-filter Preview" → "Pré-visualização de Filtro"
-- "companies match your criteria" → "empresas correspondem aos seus critérios"
-- "Run AI Matching" / "Analyzing..." → "Executar Matching IA" / "Analisando..."
-- Tabuladores: "Critérios & Busca" / "Resultados" / "Analytics"
-- "Análise Completa!" → "Matching completo!"
-- etc.
+## Fluxo do usuario
 
-### DueDiligence.tsx
-- "Due Diligence" → "Due Diligence"
-- "Automated legal and financial document analysis" → "Análise automática de documentos legais e financeiros"
-- "New Analysis" → "Nova Análise"
-- "Select Company" → "Selecionar Empresa"
-- "Upload Document (optional)" → "Enviar Documento (opcional)"
-- "Document uploaded" → "Documento enviado"
-- "Analysis complete" → "Análise concluída"
+1. Cadastra empresa em "Empresas" com estado + cidade (coordenadas auto-preenchidas)
+2. No Matching, define criterios incluindo cidade de referencia + raio
+3. Pre-filtragem mostra quantas empresas estao dentro do raio
+4. IA avalia considerando proximidade geografica como fator
 
-### Valuation.tsx
-- "Company Valuation" → "Valuation de Empresa"
-- "DCF and EBITDA-based valuation models with sensitivity analysis" → "Modelos de valuation baseados em DCF e EBITDA com análise de sensibilidade"
-- "Valuation Parameters" → "Parâmetros de Valuation"
-- "Growth Rate:" → "Taxa de Crescimento:"
-- "Discount Rate:" → "Taxa de Desconto:"
-- "EBITDA Multiple:" → "Múltiplo de EBITDA:"
-- "Calculate Valuation" → "Calcular Valuation"
-- "Valuation complete" → "Valuation concluído"
+## Detalhes tecnicos
 
-### Contracts.tsx
-- "Contract Generation" → "Geração de Contratos"
-- "AI-generated legal documents and contract templates" → "Documentos legais gerados por IA e modelos de contrato"
-- "Generate Contract" → "Gerar Contrato"
-- "Contract Type" → "Tipo de Contrato"
-- "Non-Disclosure Agreement (NDA)" → "Acordo de Não-Divulgação (NDA)"
-- "Purchase Agreement" → "Acordo de Compra"
-- "Shareholder Agreement" → "Acordo de Acionistas"
-- "Party A" / "Party B" → "Parte A" / "Parte B"
-- "Deal Value ($)" → "Valor do Acordo ($)"
-- "Effective Date" → "Data de Início"
-- "Additional Terms" → "Termos Adicionais"
-- "Contract Preview" → "Pré-visualização do Contrato"
-- "Download" → "Baixar"
-- "Contract generated" → "Contrato gerado"
+### Migracao SQL
+```text
+ALTER TABLE companies ADD COLUMN state text;
+ALTER TABLE companies ADD COLUMN city text;
+ALTER TABLE companies ADD COLUMN latitude numeric;
+ALTER TABLE companies ADD COLUMN longitude numeric;
 
-### Risk.tsx
-- "Risk Analysis" → "Análise de Risco"
-- "Consolidated risk dashboard across financial, legal, and operational dimensions" → "Painel consolidado de risco nas dimensões financeira, legal e operacional"
-- "Run Risk Analysis" → "Executar Análise de Risco"
-- "Analyze Risk" → "Analisar Risco"
-- "Risk Matrix" → "Matriz de Risco"
-- "Financial Risk" → "Risco Financeiro"
-- "Operational Risk" → "Risco Operacional"
-- "Risk Analysis complete" → "Análise de risco concluída"
+ALTER TABLE match_criteria ADD COLUMN geo_reference_city text;
+ALTER TABLE match_criteria ADD COLUMN geo_radius_km numeric;
+ALTER TABLE match_criteria ADD COLUMN geo_latitude numeric;
+ALTER TABLE match_criteria ADD COLUMN geo_longitude numeric;
+```
 
-### AdminUsers.tsx
-- "User Management" → "Gestão de Usuários"
-- "Manage platform users and roles" → "Gerencie usuários e cargos da plataforma"
-- "All Users ({count})" → "Todos os Usuários ({count})"
-- "Name" → "Nome"
-- "Company" → "Empresa"
-- "Role" → "Cargo"
-- "Joined" → "Aderido em"
-- "Actions" → "Ações"
-- "You need admin access to view this page." → "Você precisa de acesso de administrador para ver esta página."
-- "Role updated" → "Cargo atualizado"
+### Formula de Haversine (TypeScript)
+Calculo de distancia entre dois pontos (lat/lng) em km, implementado como funcao utilitaria em `src/lib/geo.ts`. Usado no `useMemo` de pre-filtragem do Matching.
 
-## Detalhes Técnicos
+### Arquivos a criar
+- `src/data/brazilian-cities.ts` -- dicionario com ~150 cidades + coordenadas
+- `src/lib/geo.ts` -- funcao haversineDistance
 
-### Estratégia de tradução
+### Arquivos a modificar
+- `src/pages/Companies.tsx` -- estado + cidade + auto-coordenadas
+- `src/pages/Matching.tsx` -- filtro geografico com raio
+- `supabase/functions/ai-analyze/index.ts` -- contexto Brasil no prompt
 
-1. **Textos estáticos**: Strings em português diretamente no código
-2. **Labels e placeholders**: Tradução em cada campo de input
-3. **Mensagens de toast**: Tradução de títulos e descrições
-4. **Card titles e descriptions**: Tradução mantendo hierarquia
-5. **Tabs e filtros**: Nomes de abas e rótulos de botões traduzidos
-
-### Arquivos a modificar (todos em src/pages/)
-
-- Auth.tsx
-- Dashboard.tsx
-- Companies.tsx
-- Matching.tsx
-- DueDiligence.tsx
-- Valuation.tsx
-- Contracts.tsx
-- Risk.tsx
-- AdminUsers.tsx
-- AppSidebar.tsx
-
-### Escala de trabalho
-
-Total de ~150+ strings em inglês a traduzir para português. A tradução é direta, preservando toda a lógica e estrutura do código.
+### Estados brasileiros (27)
+AC, AL, AP, AM, BA, CE, DF, ES, GO, MA, MT, MS, MG, PA, PB, PR, PE, PI, RJ, RN, RS, RO, RR, SC, SP, SE, TO
 
