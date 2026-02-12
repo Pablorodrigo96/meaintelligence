@@ -68,6 +68,165 @@ export type Database = {
         }
         Relationships: []
       }
+      contracts: {
+        Row: {
+          content: string | null
+          contract_type: string
+          created_at: string
+          id: string
+          parameters: Json | null
+          transaction_id: string | null
+          user_id: string
+        }
+        Insert: {
+          content?: string | null
+          contract_type: string
+          created_at?: string
+          id?: string
+          parameters?: Json | null
+          transaction_id?: string | null
+          user_id: string
+        }
+        Update: {
+          content?: string | null
+          contract_type?: string
+          created_at?: string
+          id?: string
+          parameters?: Json | null
+          transaction_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contracts_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      due_diligence_reports: {
+        Row: {
+          ai_report: string | null
+          company_id: string
+          created_at: string
+          document_url: string | null
+          id: string
+          risk_items: Json | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          ai_report?: string | null
+          company_id: string
+          created_at?: string
+          document_url?: string | null
+          id?: string
+          risk_items?: Json | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          ai_report?: string | null
+          company_id?: string
+          created_at?: string
+          document_url?: string | null
+          id?: string
+          risk_items?: Json | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "due_diligence_reports_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_criteria: {
+        Row: {
+          created_at: string
+          id: string
+          max_ebitda: number | null
+          max_revenue: number | null
+          min_ebitda: number | null
+          min_revenue: number | null
+          notes: string | null
+          target_location: string | null
+          target_sector: string | null
+          target_size: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          max_ebitda?: number | null
+          max_revenue?: number | null
+          min_ebitda?: number | null
+          min_revenue?: number | null
+          notes?: string | null
+          target_location?: string | null
+          target_sector?: string | null
+          target_size?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          max_ebitda?: number | null
+          max_revenue?: number | null
+          min_ebitda?: number | null
+          min_revenue?: number | null
+          notes?: string | null
+          target_location?: string | null
+          target_sector?: string | null
+          target_size?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      matches: {
+        Row: {
+          ai_analysis: string | null
+          buyer_id: string
+          compatibility_score: number | null
+          created_at: string
+          id: string
+          seller_company_id: string
+          status: string
+        }
+        Insert: {
+          ai_analysis?: string | null
+          buyer_id: string
+          compatibility_score?: number | null
+          created_at?: string
+          id?: string
+          seller_company_id: string
+          status?: string
+        }
+        Update: {
+          ai_analysis?: string | null
+          buyer_id?: string
+          compatibility_score?: number | null
+          created_at?: string
+          id?: string
+          seller_company_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "matches_seller_company_id_fkey"
+            columns: ["seller_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -98,6 +257,91 @@ export type Database = {
         }
         Relationships: []
       }
+      risk_assessments: {
+        Row: {
+          ai_recommendations: string | null
+          company_id: string
+          created_at: string
+          details: Json | null
+          financial_score: number | null
+          id: string
+          legal_score: number | null
+          operational_score: number | null
+          overall_score: number | null
+          user_id: string
+        }
+        Insert: {
+          ai_recommendations?: string | null
+          company_id: string
+          created_at?: string
+          details?: Json | null
+          financial_score?: number | null
+          id?: string
+          legal_score?: number | null
+          operational_score?: number | null
+          overall_score?: number | null
+          user_id: string
+        }
+        Update: {
+          ai_recommendations?: string | null
+          company_id?: string
+          created_at?: string
+          details?: Json | null
+          financial_score?: number | null
+          id?: string
+          legal_score?: number | null
+          operational_score?: number | null
+          overall_score?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "risk_assessments_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      transactions: {
+        Row: {
+          buyer_id: string
+          company_id: string
+          created_at: string
+          deal_value: number | null
+          id: string
+          seller_id: string
+          status: string
+        }
+        Insert: {
+          buyer_id: string
+          company_id: string
+          created_at?: string
+          deal_value?: number | null
+          id?: string
+          seller_id: string
+          status?: string
+        }
+        Update: {
+          buyer_id?: string
+          company_id?: string
+          created_at?: string
+          deal_value?: number | null
+          id?: string
+          seller_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transactions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           id: string
@@ -115,6 +359,44 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      valuations: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          inputs: Json | null
+          method: string
+          result: Json | null
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          inputs?: Json | null
+          method?: string
+          result?: Json | null
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          inputs?: Json | null
+          method?: string
+          result?: Json | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "valuations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
