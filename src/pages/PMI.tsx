@@ -1,15 +1,21 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { format, parseISO } from "date-fns";
 import { pmiPlaybook, PMI_GROUPS, DEADLINE_ORDER, STATUS_OPTIONS, getDeadlineColor, getStatusColor, getStatusLabel } from "@/data/pmi-playbook";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronDown, ChevronRight, Layers, Filter } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { ChevronDown, ChevronRight, Layers, Filter, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import PMIDashboard from "@/components/pmi/PMIDashboard";
 
 type ActivityStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -17,6 +23,8 @@ interface ActivityState {
   id: number;
   status: ActivityStatus;
   dbId?: string;
+  responsible?: string;
+  dueDate?: string | null;
 }
 
 export default function PMI() {
@@ -30,7 +38,6 @@ export default function PMI() {
   const [filterDeadline, setFilterDeadline] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
-  // Load activities from DB
   useEffect(() => {
     if (!user) return;
     loadActivities();
@@ -59,6 +66,8 @@ export default function PMI() {
           id: item.id,
           status: (dbRow?.status as ActivityStatus) || "pending",
           dbId: dbRow?.id,
+          responsible: (dbRow as any)?.responsible || "",
+          dueDate: (dbRow as any)?.due_date || null,
         };
       });
       setActivities(mapped);
@@ -81,7 +90,6 @@ export default function PMI() {
       status: "pending",
     }));
 
-    // Insert in batches of 100
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100);
       const { error } = await supabase.from("pmi_activities").insert(batch);
@@ -112,15 +120,52 @@ export default function PMI() {
 
     if (error) {
       console.error("Error updating status:", error);
-      // Revert
       setActivities((prev) =>
         prev.map((a) => (a.id === activityId ? { ...a, status: activity.status } : a))
       );
     }
   }, [activities]);
 
+  const updateResponsible = useCallback(async (activityId: number, value: string) => {
+    const activity = activities.find((a) => a.id === activityId);
+    if (!activity?.dbId) return;
+
+    setActivities((prev) =>
+      prev.map((a) => (a.id === activityId ? { ...a, responsible: value } : a))
+    );
+
+    const { error } = await supabase
+      .from("pmi_activities")
+      .update({ responsible: value } as any)
+      .eq("id", activity.dbId);
+
+    if (error) console.error("Error updating responsible:", error);
+  }, [activities]);
+
+  const updateDueDate = useCallback(async (activityId: number, date: Date | undefined) => {
+    const activity = activities.find((a) => a.id === activityId);
+    if (!activity?.dbId) return;
+
+    const dateStr = date ? format(date, "yyyy-MM-dd") : null;
+
+    setActivities((prev) =>
+      prev.map((a) => (a.id === activityId ? { ...a, dueDate: dateStr } : a))
+    );
+
+    const { error } = await supabase
+      .from("pmi_activities")
+      .update({ due_date: dateStr } as any)
+      .eq("id", activity.dbId);
+
+    if (error) console.error("Error updating due_date:", error);
+  }, [activities]);
+
   const getActivityStatus = (id: number): ActivityStatus => {
     return activities.find((a) => a.id === id)?.status || "pending";
+  };
+
+  const getActivityState = (id: number): ActivityState | undefined => {
+    return activities.find((a) => a.id === id);
   };
 
   const filteredPlaybook = useMemo(() => {
@@ -147,6 +192,20 @@ export default function PMI() {
     const completed = filteredPlaybook.filter((i) => getActivityStatus(i.id) === "completed").length;
     return { total: filteredPlaybook.length, completed, percent: filteredPlaybook.length > 0 ? Math.round((completed / filteredPlaybook.length) * 100) : 0 };
   }, [filteredPlaybook, activities]);
+
+  const dashboardActivities = useMemo(() => {
+    return pmiPlaybook.map((item) => {
+      const state = getActivityState(item.id);
+      return {
+        id: item.id,
+        group: item.group,
+        discipline: item.discipline,
+        deadline: item.deadline,
+        status: (state?.status || "pending") as ActivityStatus,
+        dueDate: state?.dueDate,
+      };
+    });
+  }, [activities]);
 
   const toggleGroup = (group: string) => {
     setExpandedGroups((prev) => {
@@ -195,155 +254,207 @@ export default function PMI() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <Layers className="w-8 h-8 text-primary" />
-          <h1 className="text-3xl font-display font-bold">PMI - Pós M&A Integração</h1>
-        </div>
-
-        {/* Overall Progress */}
-        <div className="flex items-center gap-4">
-          <Progress value={overallStats.percent} className="flex-1 h-3" />
-          <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">
-            {overallStats.completed}/{overallStats.total} ({overallStats.percent}%)
-          </span>
-        </div>
-
-        {/* Filters */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <Filter className="w-4 h-4 text-muted-foreground" />
-          <Select value={filterDeadline} onValueChange={setFilterDeadline}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Prazo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os prazos</SelectItem>
-              {DEADLINE_ORDER.map((d) => (
-                <SelectItem key={d} value={d}>{d}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os status</SelectItem>
-              {STATUS_OPTIONS.map((s) => (
-                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="flex items-center gap-3">
+        <Layers className="w-8 h-8 text-primary" />
+        <h1 className="text-3xl font-display font-bold">PMI - Pós M&A Integração</h1>
       </div>
 
-      {/* Groups */}
-      <div className="space-y-3">
-        {PMI_GROUPS.map((group) => {
-          const stats = getGroupStats(group);
-          if (stats.total === 0) return null;
-          const isExpanded = expandedGroups.has(group);
+      <Tabs defaultValue="dashboard" className="w-full">
+        <TabsList>
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="playbook">Playbook</TabsTrigger>
+        </TabsList>
 
-          return (
-            <div key={group} className="border rounded-lg overflow-hidden">
-              {/* Group Header */}
-              <button
-                onClick={() => toggleGroup(group)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-muted/50 hover:bg-muted transition-colors text-left"
-              >
-                {isExpanded ? <ChevronDown className="w-5 h-5 shrink-0" /> : <ChevronRight className="w-5 h-5 shrink-0" />}
-                <span className="font-semibold text-lg flex-1">{group}</span>
-                <Badge variant="secondary" className="mr-2">{stats.total} atividades</Badge>
-                <div className="flex items-center gap-2 w-48">
-                  <Progress value={stats.percent} className="h-2 flex-1" />
-                  <span className="text-xs text-muted-foreground w-10 text-right">{stats.percent}%</span>
-                </div>
-              </button>
+        <TabsContent value="dashboard">
+          <PMIDashboard activities={dashboardActivities} />
+        </TabsContent>
 
-              {/* Disciplines */}
-              {isExpanded && (
-                <div className="divide-y">
-                  {getDisciplines(group).map((discipline) => {
-                    const dStats = getDisciplineStats(group, discipline);
-                    const dKey = `${group}::${discipline}`;
-                    const dExpanded = expandedDisciplines.has(dKey);
-                    const disciplineActivities = filteredPlaybook.filter(
-                      (i) => i.group === group && i.discipline === discipline
-                    );
-
-                    return (
-                      <div key={dKey}>
-                        {/* Discipline Header */}
-                        <button
-                          onClick={() => toggleDiscipline(dKey)}
-                          className="w-full flex items-center gap-3 px-6 py-2.5 hover:bg-muted/30 transition-colors text-left"
-                        >
-                          {dExpanded ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
-                          <span className="font-medium flex-1">{discipline}</span>
-                          <Badge variant="outline" className="mr-2">{dStats.total}</Badge>
-                          <div className="flex items-center gap-2 w-36">
-                            <Progress value={dStats.percent} className="h-1.5 flex-1" />
-                            <span className="text-xs text-muted-foreground w-10 text-right">{dStats.percent}%</span>
-                          </div>
-                        </button>
-
-                        {/* Activities Table */}
-                        {dExpanded && (
-                          <div className="px-6 pb-3">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead className="w-[180px]">Área/Tema</TableHead>
-                                  <TableHead className="w-[200px]">Milestone</TableHead>
-                                  <TableHead>Atividade</TableHead>
-                                  <TableHead className="w-[80px] text-center">Prazo</TableHead>
-                                  <TableHead className="w-[150px]">Status</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {disciplineActivities.map((item) => {
-                                  const status = getActivityStatus(item.id);
-                                  return (
-                                    <TableRow key={item.id}>
-                                      <TableCell className="text-xs">{item.area}</TableCell>
-                                      <TableCell className="text-xs">{item.milestone}</TableCell>
-                                      <TableCell className="text-sm">{item.activity}</TableCell>
-                                      <TableCell className="text-center">
-                                        <span className={cn("text-xs font-medium px-2 py-0.5 rounded border", getDeadlineColor(item.deadline))}>
-                                          {item.deadline}
-                                        </span>
-                                      </TableCell>
-                                      <TableCell>
-                                        <Select
-                                          value={status}
-                                          onValueChange={(val) => updateStatus(item.id, val as ActivityStatus)}
-                                        >
-                                          <SelectTrigger className={cn("h-7 text-xs", getStatusColor(status))}>
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            {STATUS_OPTIONS.map((s) => (
-                                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+        <TabsContent value="playbook">
+          <div className="space-y-6">
+            {/* Overall Progress */}
+            <div className="flex items-center gap-4">
+              <Progress value={overallStats.percent} className="flex-1 h-3" />
+              <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">
+                {overallStats.completed}/{overallStats.total} ({overallStats.percent}%)
+              </span>
             </div>
-          );
-        })}
-      </div>
+
+            {/* Filters */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={filterDeadline} onValueChange={setFilterDeadline}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue placeholder="Prazo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os prazos</SelectItem>
+                  {DEADLINE_ORDER.map((d) => (
+                    <SelectItem key={d} value={d}>{d}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os status</SelectItem>
+                  {STATUS_OPTIONS.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Groups */}
+            <div className="space-y-3">
+              {PMI_GROUPS.map((group) => {
+                const stats = getGroupStats(group);
+                if (stats.total === 0) return null;
+                const isExpanded = expandedGroups.has(group);
+
+                return (
+                  <div key={group} className="border rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleGroup(group)}
+                      className="w-full flex items-center gap-3 px-4 py-3 bg-muted/50 hover:bg-muted transition-colors text-left"
+                    >
+                      {isExpanded ? <ChevronDown className="w-5 h-5 shrink-0" /> : <ChevronRight className="w-5 h-5 shrink-0" />}
+                      <span className="font-semibold text-lg flex-1">{group}</span>
+                      <Badge variant="secondary" className="mr-2">{stats.total} atividades</Badge>
+                      <div className="flex items-center gap-2 w-48">
+                        <Progress value={stats.percent} className="h-2 flex-1" />
+                        <span className="text-xs text-muted-foreground w-10 text-right">{stats.percent}%</span>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="divide-y">
+                        {getDisciplines(group).map((discipline) => {
+                          const dStats = getDisciplineStats(group, discipline);
+                          const dKey = `${group}::${discipline}`;
+                          const dExpanded = expandedDisciplines.has(dKey);
+                          const disciplineActivities = filteredPlaybook.filter(
+                            (i) => i.group === group && i.discipline === discipline
+                          );
+
+                          return (
+                            <div key={dKey}>
+                              <button
+                                onClick={() => toggleDiscipline(dKey)}
+                                className="w-full flex items-center gap-3 px-6 py-2.5 hover:bg-muted/30 transition-colors text-left"
+                              >
+                                {dExpanded ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+                                <span className="font-medium flex-1">{discipline}</span>
+                                <Badge variant="outline" className="mr-2">{dStats.total}</Badge>
+                                <div className="flex items-center gap-2 w-36">
+                                  <Progress value={dStats.percent} className="h-1.5 flex-1" />
+                                  <span className="text-xs text-muted-foreground w-10 text-right">{dStats.percent}%</span>
+                                </div>
+                              </button>
+
+                              {dExpanded && (
+                                <div className="px-6 pb-3">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead className="w-[150px]">Área/Tema</TableHead>
+                                        <TableHead className="w-[180px]">Milestone</TableHead>
+                                        <TableHead>Atividade</TableHead>
+                                        <TableHead className="w-[140px]">Responsável</TableHead>
+                                        <TableHead className="w-[120px]">Data Prazo</TableHead>
+                                        <TableHead className="w-[70px] text-center">Prazo</TableHead>
+                                        <TableHead className="w-[140px]">Status</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {disciplineActivities.map((item) => {
+                                        const state = getActivityState(item.id);
+                                        const status = state?.status || "pending";
+                                        const responsible = state?.responsible || "";
+                                        const dueDate = state?.dueDate;
+
+                                        return (
+                                          <TableRow key={item.id}>
+                                            <TableCell className="text-xs">{item.area}</TableCell>
+                                            <TableCell className="text-xs">{item.milestone}</TableCell>
+                                            <TableCell className="text-sm">{item.activity}</TableCell>
+                                            <TableCell>
+                                              <Input
+                                                className="h-7 text-xs"
+                                                placeholder="Responsável"
+                                                defaultValue={responsible}
+                                                onBlur={(e) => {
+                                                  if (e.target.value !== responsible) {
+                                                    updateResponsible(item.id, e.target.value);
+                                                  }
+                                                }}
+                                              />
+                                            </TableCell>
+                                            <TableCell>
+                                              <Popover>
+                                                <PopoverTrigger asChild>
+                                                  <Button
+                                                    variant="outline"
+                                                    className={cn(
+                                                      "h-7 w-full justify-start text-left text-xs font-normal",
+                                                      !dueDate && "text-muted-foreground"
+                                                    )}
+                                                  >
+                                                    <CalendarIcon className="mr-1 h-3 w-3" />
+                                                    {dueDate ? format(parseISO(dueDate), "dd/MM/yyyy") : "Selecionar"}
+                                                  </Button>
+                                                </PopoverTrigger>
+                                                <PopoverContent className="w-auto p-0" align="start">
+                                                  <Calendar
+                                                    mode="single"
+                                                    selected={dueDate ? parseISO(dueDate) : undefined}
+                                                    onSelect={(date) => updateDueDate(item.id, date)}
+                                                    initialFocus
+                                                    className={cn("p-3 pointer-events-auto")}
+                                                  />
+                                                </PopoverContent>
+                                              </Popover>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                              <span className={cn("text-xs font-medium px-2 py-0.5 rounded border", getDeadlineColor(item.deadline))}>
+                                                {item.deadline}
+                                              </span>
+                                            </TableCell>
+                                            <TableCell>
+                                              <Select
+                                                value={status}
+                                                onValueChange={(val) => updateStatus(item.id, val as ActivityStatus)}
+                                              >
+                                                <SelectTrigger className={cn("h-7 text-xs", getStatusColor(status))}>
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {STATUS_OPTIONS.map((s) => (
+                                                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            </TableCell>
+                                          </TableRow>
+                                        );
+                                      })}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
