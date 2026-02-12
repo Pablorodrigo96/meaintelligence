@@ -1,141 +1,136 @@
 
+# Plano de Correções Completas da Plataforma
 
-# Aprofundamento Top 10 com Dados Publicos (CNPJ)
+## Problemas Identificados
 
-## Visao Geral
+### 1. Textos ainda em Ingles
+- **Setores**: "Technology", "Healthcare", "Finance", etc. aparecem nos selects de Companies.tsx e Matching.tsx
+- **Tamanhos**: "Small (<$10M)", "Medium ($10M-$100M)", etc.
+- **Moeda**: Todas as funções `formatCurrency` usam `$` em vez de `R$`
+- **Valuation.tsx**: formatador de valores usa `$`
 
-Adicionar um botao "Aprofundar Top 10" na aba de Resultados do Matching que busca dados publicos das 10 melhores empresas via CNPJ, cruza com benchmarks setoriais e gera uma estimativa de faturamento usando o modelo de regras descrito.
+### 2. Type casts desnecessarios (`as any`)
+- Companies.tsx e Matching.tsx usam `(c as any).state`, `(c as any).latitude`, `(c as any).cnpj` etc.
+- Os tipos no `types.ts` ja incluem `state`, `city`, `latitude`, `longitude`, `cnpj` -- os casts sao desnecessarios e escondem erros
 
-## Arquitetura
+### 3. Transparencia da IA ausente
+- O matching mostra scores dimensionais (financeiro, setor, tamanho, localizacao, risco) mas nao explica como cada um foi calculado
+- Falta breakdown detalhado de por que a IA deu determinada nota em cada dimensao
 
-### 1. Banco de Dados
-- Adicionar coluna `cnpj` (text) na tabela `companies` para que o usuario possa cadastrar o CNPJ de cada empresa
-- Adicionar tabela `deep_dive_results` para armazenar os resultados do aprofundamento (evitar re-consultas desnecessarias)
+### 4. Tratamento de dados incompletos nao e comunicado
+- Quando uma empresa nao tem receita, EBITDA, ou CNPJ, o sistema nao informa ao usuario como isso impacta a qualidade da analise
+- Falta um "indicador de completude" por empresa
 
-### 2. Cadastro de Empresas (Companies.tsx)
-- Adicionar campo "CNPJ" no formulario de criacao/edicao de empresa
-- Mascara de formatacao: XX.XXX.XXX/XXXX-XX
+### 5. Perfil de investidor inexistente
+- Nao ha ajuste de recomendacoes baseado em perfil (Agressivo, Moderado, Conservador)
+- O matching trata todos os compradores igual
 
-### 3. Edge Function: `company-deep-dive`
-Nova edge function que:
-- Recebe uma lista de company_ids (top 10 do matching)
-- Para cada empresa com CNPJ, consulta a **BrasilAPI** (`https://brasilapi.com.br/api/cnpj/v1/{cnpj}`) -- API publica e gratuita, sem necessidade de chave
-- Extrai: razao social, capital social, porte, natureza juridica, CNAE principal, endereco, situacao cadastral, data de abertura, quadro societario
-- Aplica o **modelo de estimativa de faturamento** com os 5 fatores:
-  1. Benchmark setorial (baseado no CNAE)
-  2. Ajuste de capital social vs. regime tributario
-  3. Ajuste por numero de funcionarios (quando disponivel)
-  4. Ajuste de localizacao (fator urbano/periferico)
-  5. Formula final combinada
-- Usa a IA para gerar uma analise consolidada cruzando os dados publicos com os dados internos da plataforma
+### 6. Cache do Deep Dive nao implementado
+- Cada vez que clica "Aprofundar Top 10", faz chamadas novas para a BrasilAPI
+- A tabela `deep_dive_results` mencionada no plano original nao foi criada
 
-### 4. Dados retornados pela BrasilAPI
+---
 
-Para cada CNPJ, a BrasilAPI retorna:
-- `razao_social`: Nome oficial
-- `capital_social`: Valor do capital social registrado
-- `porte`: MEI, ME, EPP, Demais
-- `natureza_juridica`: Tipo de empresa
-- `cnae_fiscal`: Codigo CNAE principal
-- `cnae_fiscal_descricao`: Descricao do setor
-- `municipio`, `uf`: Localizacao oficial
-- `situacao_cadastral`: 1=Nula, 2=Ativa, 3=Suspensa, 4=Inapta, 8=Baixada
-- `data_inicio_atividade`: Data de abertura
-- `qsa`: Quadro de socios e administradores
+## Correcoes a Implementar
 
-### 5. Modelo de Estimativa de Faturamento
+### Fase 1: Traducao e Consistencia (Rapido)
 
-Implementado diretamente na edge function:
+**Arquivos: Companies.tsx, Matching.tsx, Valuation.tsx**
 
+- Traduzir array de setores: Technology -> Tecnologia, Healthcare -> Saude, Finance -> Financas, Manufacturing -> Manufatura, Energy -> Energia, Retail -> Varejo, Real Estate -> Imobiliario, Other -> Outro, Agribusiness -> Agronegocio, Logistics -> Logistica, Telecom -> Telecom, Education -> Educacao
+- Traduzir tamanhos: Small -> Pequena, Medium -> Media, Large -> Grande, Enterprise -> Corporacao (mantendo as faixas de receita em R$)
+- Corrigir `formatCurrency` em todos os arquivos para usar `R$` em vez de `$`
+- Corrigir `formatVal` no Valuation.tsx
+
+### Fase 2: Limpeza de Tipos (Rapido)
+
+**Arquivos: Companies.tsx, Matching.tsx**
+
+- Remover todos os `as any` desnecessarios onde os tipos ja cobrem os campos (`state`, `city`, `latitude`, `longitude`, `cnpj`)
+- O `types.ts` ja tem esses campos no Row/Insert/Update das tabelas `companies` e `match_criteria`
+- Para o `insert` no match_criteria, usar tipagem correta em vez de `as any`
+
+### Fase 3: Indicador de Completude de Dados
+
+**Arquivo: Matching.tsx**
+
+- Adicionar um badge no pre-filtro mostrando a qualidade dos dados das empresas filtradas
+- Calcular % de campos preenchidos (receita, EBITDA, CNPJ, localizacao, setor) para cada empresa
+- Mostrar no card de resultados do matching: "Dados: 80% completo" ou "Dados: 40% - analise limitada"
+- Avisar no Deep Dive quantas empresas tem CNPJ preenchido antes de iniciar
+
+### Fase 4: Perfil do Investidor
+
+**Arquivo: Matching.tsx**
+
+- Adicionar selector no topo dos criterios: Perfil de Investimento (Agressivo, Moderado, Conservador)
+- Cada perfil ajusta os pesos das dimensoes enviadas para a IA:
+  - **Agressivo**: prioriza crescimento (sector_fit e size_fit com peso maior)
+  - **Moderado**: equilibrado (pesos iguais)
+  - **Conservador**: prioriza seguranca (financial_fit e risk_fit com peso maior)
+- Passar o perfil como contexto adicional no prompt da IA no ai-analyze
+
+**Arquivo: supabase/functions/ai-analyze/index.ts**
+
+- Incluir perfil do investidor no prompt de matching
+- Ajustar instrucoes para a IA ponderar dimensoes com base no perfil
+
+### Fase 5: Transparencia e Explicabilidade
+
+**Arquivo: Matching.tsx (secao expandida do resultado)**
+
+- No radar chart de dimensoes, adicionar tooltip explicativo em cada dimensao
+- Mostrar texto curto explicando por que cada dimensao recebeu determinado score
+- Pedir para a IA retornar um campo `dimension_explanations` com explicacao breve de cada score
+
+**Arquivo: supabase/functions/ai-analyze/index.ts**
+
+- Atualizar prompt de matching para pedir `dimension_explanations`: objeto com uma frase para cada dimensao explicando o score
+
+### Fase 6: Cache do Deep Dive
+
+**Migracao SQL:**
 ```text
-Benchmarks setoriais (faturamento medio anual por setor):
-- Tecnologia: R$ 5.000.000
-- Comercio: R$ 1.500.000
-- Servicos: R$ 1.000.000
-- Industria: R$ 3.000.000
-- Saude: R$ 2.000.000
-- Agronegocio: R$ 4.000.000
-- (mapeados via CNAE)
-
-Faturamento por funcionario por setor:
-- Tecnologia: R$ 500.000
-- Comercio: R$ 200.000
-- Servicos: R$ 150.000
-- Industria: R$ 250.000
-- (etc.)
-
-Ajuste de regime tributario:
-- MEI/ME (Simples Nacional): fator 0.8
-- EPP (Lucro Presumido): fator 1.0
-- Demais (Lucro Real): fator 1.2
-
-Ajuste de localizacao:
-- SP, RJ, DF: fator 1.1
-- MG, PR, RS, SC, BA: fator 1.0
-- Demais estados: fator 0.9
-
-Formula:
-faturamento_estimado = benchmark_setor × ajuste_regime × 
-  (capital_social / limite_regime) × ajuste_localizacao
+CREATE TABLE deep_dive_results (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  result jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE deep_dive_results ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can manage own deep dive results" 
+  ON deep_dive_results FOR ALL 
+  USING (auth.uid() = user_id) 
+  WITH CHECK (auth.uid() = user_id);
 ```
 
-### 6. Interface (Matching.tsx)
+**Arquivo: DeepDiveDialog.tsx**
 
-Na aba "Resultados", apos os matches aparecerem:
-- Botao "Aprofundar Top 10" (com icone de lupa/microscópio) -- so aparece quando ha matches
-- Ao clicar, abre um painel/dialog com loading animado
-- Resultados mostrados em cards detalhados para cada empresa:
-  - Dados oficiais (razao social, CNPJ, capital social, porte, CNAE)
-  - Situacao cadastral (ativa/inativa com badge colorido)
-  - Data de abertura e tempo de atividade
-  - Quadro societario (lista de socios)
-  - Estimativa de faturamento com breakdown da formula
-  - Analise IA cruzando dados publicos + dados internos
-  - Score de confiabilidade da estimativa
-- Empresas sem CNPJ cadastrado mostram aviso para adicionar
+- Antes de chamar a edge function, verificar se ja existe resultado recente (< 24h) no cache
+- Apos receber resultado, salvar no `deep_dive_results`
+- Botao "Reexecutar" força nova consulta ignorando cache
+- Mostrar "Ultimo aprofundamento: ha 2 horas" quando usando cache
 
-## Arquivos
+---
 
-### Criar
-- `supabase/functions/company-deep-dive/index.ts` -- edge function principal
+## Resumo de Arquivos
 
 ### Modificar
-- `src/pages/Companies.tsx` -- campo CNPJ no formulario
-- `src/pages/Matching.tsx` -- botao "Aprofundar Top 10" + painel de resultados
+- `src/pages/Companies.tsx` -- setores em PT, tamanhos em PT, moeda R$, remover `as any`
+- `src/pages/Matching.tsx` -- setores em PT, moeda R$, remover `as any`, perfil investidor, completude de dados
+- `src/pages/Valuation.tsx` -- moeda R$
+- `src/components/DeepDiveDialog.tsx` -- cache de resultados
+- `supabase/functions/ai-analyze/index.ts` -- perfil investidor no prompt, dimension_explanations
 
-### Migracao SQL
-```text
-ALTER TABLE companies ADD COLUMN cnpj text;
-```
+### Criar (migracao)
+- Tabela `deep_dive_results` com RLS
 
-## Fluxo do Usuario
+## Ordem de Execucao
 
-1. Cadastra empresas com CNPJ (campo opcional)
-2. Roda o matching IA normalmente
-3. Na aba de resultados, clica em "Aprofundar Top 10"
-4. Sistema busca dados publicos de cada empresa via BrasilAPI
-5. Aplica modelo de estimativa de faturamento
-6. IA gera analise consolidada cruzando tudo
-7. Usuario ve cards detalhados com dados oficiais + estimativas
-
-## Detalhes Tecnicos
-
-### BrasilAPI -- sem necessidade de API key
-- Endpoint: `https://brasilapi.com.br/api/cnpj/v1/{cnpj}`
-- Rate limit: ~3 req/s (vamos adicionar delay entre chamadas)
-- Gratuita e open source
-- Dados da Receita Federal
-
-### Mapeamento CNAE para Setor
-Na edge function, criar um mapa dos principais grupos CNAE para os setores da plataforma:
-- CNAE 62.xx → Tecnologia
-- CNAE 47.xx → Comercio
-- CNAE 86.xx → Saude
-- CNAE 01-03.xx → Agronegocio
-- etc.
-
-### Tratamento de erros
-- CNPJ invalido ou nao encontrado: mostrar aviso, pular empresa
-- BrasilAPI fora do ar: fallback com analise IA apenas dos dados internos
-- Empresa sem CNPJ: mostrar card com aviso "Adicione o CNPJ para dados completos"
-
+1. Traducao + moeda (impacto visual imediato)
+2. Limpeza de tipos
+3. Indicador de completude
+4. Perfil do investidor
+5. Transparencia da IA
+6. Cache do Deep Dive
