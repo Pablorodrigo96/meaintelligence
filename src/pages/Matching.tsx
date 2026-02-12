@@ -14,11 +14,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
 import { haversineDistance } from "@/lib/geo";
+import { DeepDiveDialog } from "@/components/DeepDiveDialog";
 
 const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Agribusiness", "Logistics", "Telecom", "Education", "Other"];
 const companySizes = ["Startup", "Small", "Medium", "Large", "Enterprise"];
@@ -67,6 +68,7 @@ export default function Matching() {
   const [expandedMatch, setExpandedMatch] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [minScoreFilter, setMinScoreFilter] = useState([0]);
+  const [deepDiveOpen, setDeepDiveOpen] = useState(false);
 
   const [criteria, setCriteria] = useState({
     target_sector: "",
@@ -581,6 +583,33 @@ export default function Matching() {
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Deep Dive Button */}
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => setDeepDiveOpen(true)}
+                  variant="outline"
+                  className="border-primary/30 hover:bg-primary/5"
+                >
+                  <Microscope className="w-4 h-4 mr-2" />
+                  Aprofundar Top 10
+                </Button>
+                <p className="text-xs text-muted-foreground">Busca dados públicos via CNPJ e estima faturamento</p>
+              </div>
+
+              <DeepDiveDialog
+                companies={displayMatches.slice(0, 10).map((m) => ({
+                  id: m.companies?.id,
+                  name: m.companies?.name,
+                  cnpj: (m.companies as any)?.cnpj,
+                  sector: m.companies?.sector,
+                  revenue: m.companies?.revenue,
+                  ebitda: m.companies?.ebitda,
+                  location: m.companies?.location,
+                }))}
+                open={deepDiveOpen}
+                onOpenChange={setDeepDiveOpen}
+              />
 
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">

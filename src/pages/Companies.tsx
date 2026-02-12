@@ -31,7 +31,16 @@ function formatCurrency(val: number | null) {
   return `$${val.toLocaleString()}`;
 }
 
-const emptyCompany = { name: "", sector: "", state: "", city: "", size: "", description: "", revenue: "", ebitda: "", cash_flow: "", debt: "", risk_level: "medium" };
+const emptyCompany = { name: "", cnpj: "", sector: "", state: "", city: "", size: "", description: "", revenue: "", ebitda: "", cash_flow: "", debt: "", risk_level: "medium" };
+
+function formatCnpjInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 14);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+  if (digits.length <= 12) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
 
 export default function Companies() {
   const { user } = useAuth();
@@ -60,6 +69,7 @@ export default function Companies() {
       const location = values.city && values.state ? `${values.city}, ${values.state}` : values.city || values.state || null;
       const payload: Record<string, any> = {
         name: values.name,
+        cnpj: values.cnpj ? values.cnpj.replace(/\D/g, "") : null,
         sector: values.sector || null,
         location,
         state: values.state || null,
@@ -114,6 +124,7 @@ export default function Companies() {
     setEditingId(c.id);
     setForm({
       name: c.name,
+      cnpj: (c as any).cnpj || "",
       sector: c.sector || "",
       state: c.state || "",
       city: c.city || "",
@@ -148,6 +159,7 @@ export default function Companies() {
             <form onSubmit={(e) => { e.preventDefault(); saveMutation.mutate(form); }} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2"><Label>Nome *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
+                <div className="space-y-2"><Label>CNPJ</Label><Input value={form.cnpj} onChange={(e) => setForm({ ...form, cnpj: formatCnpjInput(e.target.value) })} placeholder="XX.XXX.XXX/XXXX-XX" maxLength={18} /></div>
                 <div className="space-y-2"><Label>Setor</Label>
                   <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
                     <SelectTrigger><SelectValue placeholder="Selecionar setor" /></SelectTrigger>
