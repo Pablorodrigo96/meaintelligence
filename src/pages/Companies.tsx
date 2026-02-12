@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Building2, Plus, Search, Pencil, Trash2 } from "lucide-react";
+import { Building2, Plus, Search, Pencil, Trash2, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { BRAZILIAN_STATES, findCity, getCitiesByState } from "@/data/brazilian-cities";
 
 const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Other"];
 const sizes = ["Small (<$10M)", "Medium ($10M-$100M)", "Large ($100M-$1B)", "Enterprise (>$1B)"];
@@ -30,7 +31,7 @@ function formatCurrency(val: number | null) {
   return `$${val.toLocaleString()}`;
 }
 
-const emptyCompany = { name: "", sector: "", location: "", size: "", description: "", revenue: "", ebitda: "", cash_flow: "", debt: "", risk_level: "medium" };
+const emptyCompany = { name: "", sector: "", state: "", city: "", size: "", description: "", revenue: "", ebitda: "", cash_flow: "", debt: "", risk_level: "medium" };
 
 export default function Companies() {
   const { user } = useAuth();
@@ -41,6 +42,8 @@ export default function Companies() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyCompany);
+
+  const citySuggestions = form.state ? getCitiesByState(form.state) : [];
 
   const { data: companies = [], isLoading } = useQuery({
     queryKey: ["companies"],
@@ -53,10 +56,16 @@ export default function Companies() {
 
   const saveMutation = useMutation({
     mutationFn: async (values: typeof form) => {
-      const payload = {
+      const cityData = findCity(values.city, values.state);
+      const location = values.city && values.state ? `${values.city}, ${values.state}` : values.city || values.state || null;
+      const payload: Record<string, any> = {
         name: values.name,
         sector: values.sector || null,
-        location: values.location || null,
+        location,
+        state: values.state || null,
+        city: values.city || null,
+        latitude: cityData?.lat ?? null,
+        longitude: cityData?.lng ?? null,
         size: values.size || null,
         description: values.description || null,
         revenue: values.revenue ? Number(values.revenue) : null,
@@ -67,10 +76,10 @@ export default function Companies() {
         user_id: user!.id,
       };
       if (editingId) {
-        const { error } = await supabase.from("companies").update(payload).eq("id", editingId);
+        const { error } = await supabase.from("companies").update(payload as any).eq("id", editingId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("companies").insert(payload);
+        const { error } = await supabase.from("companies").insert(payload as any);
         if (error) throw error;
       }
     },
@@ -103,7 +112,19 @@ export default function Companies() {
 
   const openEdit = (c: any) => {
     setEditingId(c.id);
-    setForm({ name: c.name, sector: c.sector || "", location: c.location || "", size: c.size || "", description: c.description || "", revenue: c.revenue?.toString() || "", ebitda: c.ebitda?.toString() || "", cash_flow: c.cash_flow?.toString() || "", debt: c.debt?.toString() || "", risk_level: c.risk_level || "medium" });
+    setForm({
+      name: c.name,
+      sector: c.sector || "",
+      state: c.state || "",
+      city: c.city || "",
+      size: c.size || "",
+      description: c.description || "",
+      revenue: c.revenue?.toString() || "",
+      ebitda: c.ebitda?.toString() || "",
+      cash_flow: c.cash_flow?.toString() || "",
+      debt: c.debt?.toString() || "",
+      risk_level: c.risk_level || "medium",
+    });
     setDialogOpen(true);
   };
 
@@ -133,17 +154,44 @@ export default function Companies() {
                     <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Localização</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+                <div className="space-y-2">
+                  <Label>Estado</Label>
+                  <Select value={form.state} onValueChange={(v) => setForm({ ...form, state: v, city: "" })}>
+                    <SelectTrigger><SelectValue placeholder="Selecionar estado" /></SelectTrigger>
+                    <SelectContent>
+                      {BRAZILIAN_STATES.map((s) => (
+                        <SelectItem key={s.uf} value={s.uf}>{s.uf} — {s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Cidade</Label>
+                  {citySuggestions.length > 0 ? (
+                    <Select value={form.city} onValueChange={(v) => setForm({ ...form, city: v })}>
+                      <SelectTrigger><SelectValue placeholder="Selecionar cidade" /></SelectTrigger>
+                      <SelectContent>
+                        {citySuggestions.map((c) => (
+                          <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Nome da cidade" />
+                  )}
+                  {form.city && form.state && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <MapPin className="w-3 h-3" />
+                      {findCity(form.city, form.state) ? "Coordenadas detectadas automaticamente" : "Cidade sem coordenadas no dicionário"}
+                    </p>
+                  )}
+                </div>
                 <div className="space-y-2"><Label>Tamanho</Label>
                   <Select value={form.size} onValueChange={(v) => setForm({ ...form, size: v })}>
                     <SelectTrigger><SelectValue placeholder="Selecionar tamanho" /></SelectTrigger>
                     <SelectContent>{sizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Receita ($)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
-                <div className="space-y-2"><Label>EBITDA ($)</Label><Input type="number" value={form.ebitda} onChange={(e) => setForm({ ...form, ebitda: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Fluxo de Caixa ($)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Dívida ($)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
                 <div className="space-y-2"><Label>Nível de Risco</Label>
                   <Select value={form.risk_level} onValueChange={(v) => setForm({ ...form, risk_level: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -154,6 +202,10 @@ export default function Companies() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2"><Label>Receita ($)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
+                <div className="space-y-2"><Label>EBITDA ($)</Label><Input type="number" value={form.ebitda} onChange={(e) => setForm({ ...form, ebitda: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Fluxo de Caixa ($)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Dívida ($)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
               </div>
               <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
               <Button type="submit" className="w-full" disabled={saveMutation.isPending}>{saveMutation.isPending ? "Salvando..." : editingId ? "Atualizar" : "Criar"}</Button>
@@ -189,7 +241,7 @@ export default function Companies() {
                   <div className="p-2 rounded-lg bg-muted"><Building2 className="w-5 h-5 text-primary" /></div>
                   <div>
                     <CardTitle className="text-base font-display">{c.name}</CardTitle>
-                    <p className="text-xs text-muted-foreground">{c.sector} · {c.location}</p>
+                    <p className="text-xs text-muted-foreground">{c.sector} · {c.location || `${(c as any).city || ""}, ${(c as any).state || ""}`}</p>
                   </div>
                 </div>
                 {riskBadge(c.risk_level)}

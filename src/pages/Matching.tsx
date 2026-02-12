@@ -14,12 +14,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
+import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
+import { haversineDistance } from "@/lib/geo";
 
 const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Agribusiness", "Logistics", "Telecom", "Education", "Other"];
-const regions = ["Brazil", "Latin America", "North America", "Europe", "Asia-Pacific", "Middle East & Africa", "Global"];
 const companySizes = ["Startup", "Small", "Medium", "Large", "Enterprise"];
 const riskLevels = ["Low", "Medium", "High"];
 
@@ -70,7 +71,10 @@ export default function Matching() {
   const [criteria, setCriteria] = useState({
     target_sector: "",
     target_size: "",
-    target_location: "",
+    target_state: "",
+    geo_reference_city: "",
+    geo_radius_km: 500,
+    no_geo_limit: true,
     min_revenue: "",
     max_revenue: "",
     min_ebitda: "",
@@ -118,7 +122,13 @@ export default function Matching() {
     },
   });
 
-  // Pre-filter companies based on criteria
+  // Resolve reference city coordinates
+  const refCityData = useMemo(() => {
+    if (!criteria.geo_reference_city) return null;
+    return findCity(criteria.geo_reference_city, criteria.target_state || undefined);
+  }, [criteria.geo_reference_city, criteria.target_state]);
+
+  // Pre-filter companies based on criteria including geo
   const filteredCompanies = useMemo(() => {
     let filtered = [...companies];
     if (criteria.target_sector) filtered = filtered.filter((c) => c.sector === criteria.target_sector);
@@ -127,33 +137,83 @@ export default function Matching() {
     if (criteria.min_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? 0) >= Number(criteria.min_ebitda));
     if (criteria.max_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? Infinity) <= Number(criteria.max_ebitda));
     if (criteria.target_size) filtered = filtered.filter((c) => c.size === criteria.target_size);
+    // State filter
+    if (criteria.target_state) filtered = filtered.filter((c) => (c as any).state === criteria.target_state);
+    // Geo radius filter
+    if (!criteria.no_geo_limit && refCityData) {
+      filtered = filtered.filter((c) => {
+        const lat = (c as any).latitude;
+        const lng = (c as any).longitude;
+        if (lat == null || lng == null) return true; // include companies without coords
+        const dist = haversineDistance(refCityData.lat, refCityData.lng, lat, lng);
+        return dist <= criteria.geo_radius_km;
+      });
+    }
     return filtered;
-  }, [companies, criteria]);
+  }, [companies, criteria, refCityData]);
+
+  // Count companies with/without coordinates for geo info
+  const geoInfo = useMemo(() => {
+    if (criteria.no_geo_limit || !refCityData) return null;
+    const withCoords = filteredCompanies.filter((c) => (c as any).latitude != null).length;
+    const withoutCoords = filteredCompanies.filter((c) => (c as any).latitude == null).length;
+    return { withCoords, withoutCoords };
+  }, [filteredCompanies, criteria.no_geo_limit, refCityData]);
+
+  // Available cities for reference city dropdown
+  const refCitySuggestions = useMemo(() => {
+    return criteria.target_state ? getCitiesByState(criteria.target_state) : BRAZILIAN_CITIES;
+  }, [criteria.target_state]);
 
   // Run matching mutation with dedup
   const runMatchMutation = useMutation({
     mutationFn: async () => {
-      if (filteredCompanies.length === 0) throw new Error("No companies match your criteria. Add companies or broaden your filters.");
+      if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios. Adicione empresas ou amplie os filtros.");
 
-      // Save criteria
-      await supabase.from("match_criteria").insert({
+      // Build criteria for save
+      const saveCriteria: Record<string, any> = {
         user_id: user!.id,
         target_sector: criteria.target_sector || null,
         target_size: criteria.target_size || null,
-        target_location: criteria.target_location || null,
+        target_location: criteria.target_state || null,
         min_revenue: criteria.min_revenue ? Number(criteria.min_revenue) : null,
         max_revenue: criteria.max_revenue ? Number(criteria.max_revenue) : null,
         min_ebitda: criteria.min_ebitda ? Number(criteria.min_ebitda) : null,
         max_ebitda: criteria.max_ebitda ? Number(criteria.max_ebitda) : null,
         notes: criteria.notes || null,
-      });
+        geo_reference_city: criteria.geo_reference_city || null,
+        geo_radius_km: criteria.no_geo_limit ? null : criteria.geo_radius_km,
+        geo_latitude: refCityData?.lat ?? null,
+        geo_longitude: refCityData?.lng ?? null,
+      };
+
+      await supabase.from("match_criteria").insert(saveCriteria as any);
 
       // Dedup: delete old "new" matches
       await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
 
+      // Enrich companies with distance info for AI
+      const companiesWithGeo = filteredCompanies.map((c) => {
+        const co = c as any;
+        const dist = refCityData && co.latitude != null && co.longitude != null
+          ? haversineDistance(refCityData.lat, refCityData.lng, co.latitude, co.longitude)
+          : null;
+        return { ...c, distance_km: dist ? Math.round(dist) : null };
+      });
+
       // Call AI
       const { data, error } = await supabase.functions.invoke("ai-analyze", {
-        body: { type: "match", data: { criteria, companies: filteredCompanies } },
+        body: {
+          type: "match",
+          data: {
+            criteria: {
+              ...criteria,
+              reference_city: criteria.geo_reference_city,
+              radius_km: criteria.no_geo_limit ? null : criteria.geo_radius_km,
+            },
+            companies: companiesWithGeo,
+          },
+        },
       });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
@@ -191,22 +251,16 @@ export default function Matching() {
     queryClient.invalidateQueries({ queryKey: ["matches"] });
   };
 
-  // Parse AI analysis JSON safely
   const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; recommendation: string } => {
     if (!raw) return { analysis: "", dimensions: null, recommendation: "" };
     try {
       const parsed = JSON.parse(raw);
-      return {
-        analysis: parsed.analysis || raw,
-        dimensions: parsed.dimensions || null,
-        recommendation: parsed.recommendation || "",
-      };
+      return { analysis: parsed.analysis || raw, dimensions: parsed.dimensions || null, recommendation: parsed.recommendation || "" };
     } catch {
       return { analysis: raw, dimensions: null, recommendation: "" };
     }
   };
 
-  // Filtered matches for results tab
   const displayMatches = useMemo(() => {
     let result = [...matches];
     if (statusFilter !== "all") result = result.filter((m) => m.status === statusFilter);
@@ -214,14 +268,10 @@ export default function Matching() {
     return result;
   }, [matches, statusFilter, minScoreFilter]);
 
-  // Analytics data
   const scoreDistribution = useMemo(() => {
     const buckets = [
-      { range: "0-20", count: 0 },
-      { range: "21-40", count: 0 },
-      { range: "41-60", count: 0 },
-      { range: "61-80", count: 0 },
-      { range: "81-100", count: 0 },
+      { range: "0-20", count: 0 }, { range: "21-40", count: 0 }, { range: "41-60", count: 0 },
+      { range: "61-80", count: 0 }, { range: "81-100", count: 0 },
     ];
     matches.forEach((m) => {
       const s = Number(m.compatibility_score);
@@ -236,10 +286,7 @@ export default function Matching() {
 
   const sectorDistribution = useMemo(() => {
     const map: Record<string, number> = {};
-    matches.forEach((m) => {
-      const sector = m.companies?.sector || "Unknown";
-      map[sector] = (map[sector] || 0) + 1;
-    });
+    matches.forEach((m) => { const s = m.companies?.sector || "Desconhecido"; map[s] = (map[s] || 0) + 1; });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [matches]);
 
@@ -256,7 +303,10 @@ export default function Matching() {
     setCriteria({
       target_sector: saved.target_sector || "",
       target_size: saved.target_size || "",
-      target_location: saved.target_location || "",
+      target_state: saved.target_location || "",
+      geo_reference_city: saved.geo_reference_city || "",
+      geo_radius_km: saved.geo_radius_km || 500,
+      no_geo_limit: !saved.geo_radius_km,
       min_revenue: saved.min_revenue?.toString() || "",
       max_revenue: saved.max_revenue?.toString() || "",
       min_ebitda: saved.min_ebitda?.toString() || "",
@@ -294,7 +344,6 @@ export default function Matching() {
 
         {/* ========== TAB 1: CRITERIA ========== */}
         <TabsContent value="criteria" className="space-y-6 mt-6">
-          {/* Saved criteria history */}
           {criteriaHistory.length > 0 && (
             <Card>
               <CardHeader className="pb-3">
@@ -303,7 +352,7 @@ export default function Matching() {
               <CardContent className="flex flex-wrap gap-2">
                 {criteriaHistory.map((c: any) => (
                   <Button key={c.id} variant="outline" size="sm" onClick={() => loadCriteria(c)} className="text-xs">
-                    {c.target_sector || "Any"} · {c.target_location || "Global"} · {new Date(c.created_at).toLocaleDateString()}
+                    {c.target_sector || "Todos"} · {c.target_location || "Brasil"} · {c.geo_reference_city ? `${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""} · {new Date(c.created_at).toLocaleDateString()}
                   </Button>
                 ))}
               </CardContent>
@@ -311,56 +360,119 @@ export default function Matching() {
           )}
 
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Left column: strategic criteria */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="font-display flex items-center gap-2"><Globe className="w-5 h-5 text-accent" />Critérios Estratégicos</CardTitle>
-                <CardDescription>Defina o perfil do seu alvo de aquisição ideal</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Setor Alvo</Label>
-                    <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
-                      <SelectTrigger><SelectValue placeholder="Qualquer setor" /></SelectTrigger>
-                      <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Região</Label>
-                    <Select value={criteria.target_location} onValueChange={(v) => setCriteria({ ...criteria, target_location: v })}>
-                      <SelectTrigger><SelectValue placeholder="Global" /></SelectTrigger>
-                      <SelectContent>{regions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Tamanho da Empresa</Label>
-                    <Select value={criteria.target_size} onValueChange={(v) => setCriteria({ ...criteria, target_size: v })}>
-                      <SelectTrigger><SelectValue placeholder="Qualquer tamanho" /></SelectTrigger>
-                      <SelectContent>{companySizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                    </Select>
+            {/* Left column: strategic + geo criteria */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="font-display flex items-center gap-2"><Globe className="w-5 h-5 text-accent" />Critérios Estratégicos</CardTitle>
+                  <CardDescription>Defina o perfil do seu alvo de aquisição ideal</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Setor Alvo</Label>
+                      <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
+                        <SelectTrigger><SelectValue placeholder="Qualquer setor" /></SelectTrigger>
+                        <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Tamanho da Empresa</Label>
+                      <Select value={criteria.target_size} onValueChange={(v) => setCriteria({ ...criteria, target_size: v })}>
+                        <SelectTrigger><SelectValue placeholder="Qualquer tamanho" /></SelectTrigger>
+                        <SelectContent>{companySizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Tolerância ao Risco</Label>
                     <Select value={criteria.risk_level} onValueChange={(v) => setCriteria({ ...criteria, risk_level: v })}>
-                      <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Qualquer" /></SelectTrigger>
                       <SelectContent>{riskLevels.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                </div>
-                <div className="space-y-2">
+                  <div className="space-y-2">
                     <Label>Notas Estratégicas</Label>
-                  <Textarea
-                    value={criteria.notes}
-                    onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })}
-                    placeholder="Ex.: Buscando empresas com receita recorrente forte, idealmente SaaS, com equipe de gestão comprovada..."
-                    className="min-h-[100px]"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                    <Textarea
+                      value={criteria.notes}
+                      onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })}
+                      placeholder="Ex.: Buscando empresas com receita recorrente forte, idealmente SaaS, com equipe de gestão comprovada..."
+                      className="min-h-[80px]"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Geographic filter card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="font-display flex items-center gap-2"><MapPin className="w-5 h-5 text-primary" />Filtro Geográfico</CardTitle>
+                  <CardDescription>Filtre por estado, cidade e raio de proximidade</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="space-y-2">
+                    <Label>Estado</Label>
+                    <Select value={criteria.target_state} onValueChange={(v) => setCriteria({ ...criteria, target_state: v === "__all__" ? "" : v, geo_reference_city: "" })}>
+                      <SelectTrigger><SelectValue placeholder="Todos os estados" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos os estados</SelectItem>
+                        {BRAZILIAN_STATES.map((s) => (
+                          <SelectItem key={s.uf} value={s.uf}>{s.uf} — {s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Cidade de Referência</Label>
+                    <Select value={criteria.geo_reference_city} onValueChange={(v) => setCriteria({ ...criteria, geo_reference_city: v === "__none__" ? "" : v })}>
+                      <SelectTrigger><SelectValue placeholder="Selecionar cidade base" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Nenhuma</SelectItem>
+                        {refCitySuggestions.map((c) => (
+                          <SelectItem key={`${c.name}-${c.state}`} value={c.name}>{c.name} ({c.state})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {criteria.geo_reference_city && refCityData && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={criteria.no_geo_limit}
+                            onChange={(e) => setCriteria({ ...criteria, no_geo_limit: e.target.checked })}
+                            className="rounded border-border"
+                          />
+                          Sem limite de distância
+                        </label>
+                      </div>
+                      {!criteria.no_geo_limit && (
+                        <div className="space-y-2">
+                          <Label>Raio de Busca: {criteria.geo_radius_km} km</Label>
+                          <Slider
+                            value={[criteria.geo_radius_km]}
+                            onValueChange={([v]) => setCriteria({ ...criteria, geo_radius_km: v })}
+                            min={10}
+                            max={500}
+                            step={10}
+                          />
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>10 km</span>
+                            <span>250 km</span>
+                            <span>500 km</span>
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        Referência: {refCityData.name}, {refCityData.state} ({refCityData.lat.toFixed(2)}, {refCityData.lng.toFixed(2)})
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
 
             {/* Right column: financial criteria */}
             <Card>
@@ -399,6 +511,11 @@ export default function Matching() {
                   <p className="text-sm text-muted-foreground">
                     <span className="font-semibold text-foreground">{filteredCompanies.length}</span> de {companies.length} empresas correspondem aos seus critérios
                   </p>
+                  {geoInfo && (
+                    <p className="text-xs text-muted-foreground">
+                      📍 {geoInfo.withCoords} com coordenadas · {geoInfo.withoutCoords > 0 ? `⚠️ ${geoInfo.withoutCoords} sem coordenadas (incluídas)` : "todas geolocalizadas"}
+                    </p>
+                  )}
                   <Progress value={companies.length > 0 ? (filteredCompanies.length / companies.length) * 100 : 0} className="h-2" />
                 </div>
 
@@ -431,7 +548,7 @@ export default function Matching() {
           ) : matches.length === 0 ? (
             <Card className="py-16 flex flex-col items-center justify-center text-center">
               <Search className="w-12 h-12 text-muted-foreground mb-4" />
-               <h3 className="text-lg font-display font-semibold">Nenhum match ainda</h3>
+              <h3 className="text-lg font-display font-semibold">Nenhum match ainda</h3>
               <p className="text-muted-foreground mt-1 max-w-sm">Defina seus critérios e execute o matching IA para descobrir alvos de aquisição compatíveis.</p>
               <Button className="mt-4" onClick={() => setActiveTab("criteria")}>
                 <Target className="w-4 h-4 mr-2" />Ir para Critérios
@@ -439,7 +556,6 @@ export default function Matching() {
             </Card>
           ) : (
             <>
-              {/* Stats row */}
               <div className="grid gap-4 md:grid-cols-4">
                 <Card>
                   <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total de Matches</CardTitle></CardHeader>
@@ -466,7 +582,6 @@ export default function Matching() {
                 </Card>
               </div>
 
-              {/* Filters */}
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">Status:</Label>
@@ -487,7 +602,6 @@ export default function Matching() {
                 <p className="text-sm text-muted-foreground ml-auto">{displayMatches.length} resultados</p>
               </div>
 
-              {/* Results table */}
               <Card>
                 <Table>
                   <TableHeader>
@@ -544,7 +658,6 @@ export default function Matching() {
                             <TableRow key={`${m.id}-detail`}>
                               <TableCell colSpan={8} className="bg-muted/30 p-6">
                                 <div className="grid gap-6 lg:grid-cols-2">
-                                  {/* Left: Analysis text */}
                                   <div className="space-y-4">
                                     <div>
                                       <h4 className="font-display font-semibold text-sm mb-2">Análise da IA</h4>
@@ -575,14 +688,12 @@ export default function Matching() {
                                       </div>
                                     </div>
                                   </div>
-
-                                  {/* Right: Radar chart */}
                                   {dimensions && (
                                     <div>
                                       <h4 className="font-display font-semibold text-sm mb-2 text-center">Dimensões de Compatibilidade</h4>
                                       <ResponsiveContainer width="100%" height={280}>
                                         <RadarChart data={[
-                                           { dim: "Financeiro", value: dimensions.financial_fit },
+                                          { dim: "Financeiro", value: dimensions.financial_fit },
                                           { dim: "Setor", value: dimensions.sector_fit },
                                           { dim: "Tamanho", value: dimensions.size_fit },
                                           { dim: "Localização", value: dimensions.location_fit },
@@ -615,16 +726,13 @@ export default function Matching() {
           {matches.length === 0 ? (
             <Card className="py-16 flex flex-col items-center justify-center text-center">
               <BarChart3 className="w-12 h-12 text-muted-foreground mb-4" />
-               <h3 className="text-lg font-display font-semibold">Sem dados ainda</h3>
+              <h3 className="text-lg font-display font-semibold">Sem dados ainda</h3>
               <p className="text-muted-foreground mt-1">Execute o matching primeiro para ver as análises.</p>
             </Card>
           ) : (
             <div className="grid gap-6 lg:grid-cols-2">
-              {/* Score distribution */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="font-display text-base">Distribuição de Scores</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle className="font-display text-base">Distribuição de Scores</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={280}>
                     <BarChart data={scoreDistribution}>
@@ -637,12 +745,8 @@ export default function Matching() {
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
-
-              {/* Sector breakdown */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="font-display text-base">Matches por Setor</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle className="font-display text-base">Matches por Setor</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={280}>
                     <PieChart>
@@ -656,21 +760,17 @@ export default function Matching() {
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
-
-              {/* Match history timeline */}
               <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="font-display text-base">Atividade Recente de Matching</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle className="font-display text-base">Atividade Recente de Matching</CardTitle></CardHeader>
                 <CardContent>
                   <div className="space-y-3">
                     {criteriaHistory.map((c: any) => (
                       <div key={c.id} className="flex items-center gap-4 rounded-lg border p-3">
                         <div className="h-2 w-2 rounded-full bg-primary" />
                         <div className="flex-1">
-                          <p className="text-sm font-medium">{c.target_sector || "Todos os setores"} · {c.target_location || "Global"}</p>
+                          <p className="text-sm font-medium">{c.target_sector || "Todos os setores"} · {c.target_location || "Brasil"} {c.geo_reference_city ? `· ${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""}</p>
                           <p className="text-xs text-muted-foreground">
-                            Revenue: {c.min_revenue ? formatCurrency(c.min_revenue) : "Any"} – {c.max_revenue ? formatCurrency(c.max_revenue) : "Any"}
+                            Receita: {c.min_revenue ? formatCurrency(c.min_revenue) : "Qualquer"} – {c.max_revenue ? formatCurrency(c.max_revenue) : "Qualquer"}
                           </p>
                         </div>
                         <p className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</p>
