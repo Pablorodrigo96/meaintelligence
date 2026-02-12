@@ -17,51 +17,63 @@ export type Database = {
       companies: {
         Row: {
           cash_flow: number | null
+          city: string | null
           created_at: string
           debt: number | null
           description: string | null
           ebitda: number | null
           id: string
+          latitude: number | null
           location: string | null
+          longitude: number | null
           name: string
           revenue: number | null
           risk_level: string | null
           sector: string | null
           size: string | null
+          state: string | null
           status: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           cash_flow?: number | null
+          city?: string | null
           created_at?: string
           debt?: number | null
           description?: string | null
           ebitda?: number | null
           id?: string
+          latitude?: number | null
           location?: string | null
+          longitude?: number | null
           name: string
           revenue?: number | null
           risk_level?: string | null
           sector?: string | null
           size?: string | null
+          state?: string | null
           status?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           cash_flow?: number | null
+          city?: string | null
           created_at?: string
           debt?: number | null
           description?: string | null
           ebitda?: number | null
           id?: string
+          latitude?: number | null
           location?: string | null
+          longitude?: number | null
           name?: string
           revenue?: number | null
           risk_level?: string | null
           sector?: string | null
           size?: string | null
+          state?: string | null
           status?: string | null
           updated_at?: string
           user_id?: string
@@ -150,6 +162,10 @@ export type Database = {
       match_criteria: {
         Row: {
           created_at: string
+          geo_latitude: number | null
+          geo_longitude: number | null
+          geo_radius_km: number | null
+          geo_reference_city: string | null
           id: string
           max_ebitda: number | null
           max_revenue: number | null
@@ -163,6 +179,10 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          geo_latitude?: number | null
+          geo_longitude?: number | null
+          geo_radius_km?: number | null
+          geo_reference_city?: string | null
           id?: string
           max_ebitda?: number | null
           max_revenue?: number | null
@@ -176,6 +196,10 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          geo_latitude?: number | null
+          geo_longitude?: number | null
+          geo_radius_km?: number | null
+          geo_reference_city?: string | null
           id?: string
           max_ebitda?: number | null
           max_revenue?: number | null
