@@ -121,6 +121,102 @@ export type Database = {
           },
         ]
       }
+      dd_checklist_items: {
+        Row: {
+          category: string
+          company_id: string
+          created_at: string
+          description: string | null
+          document_url: string | null
+          due_date: string | null
+          id: string
+          item_name: string
+          notes: string | null
+          responsible: string | null
+          severity: string
+          sort_order: number | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category: string
+          company_id: string
+          created_at?: string
+          description?: string | null
+          document_url?: string | null
+          due_date?: string | null
+          id?: string
+          item_name: string
+          notes?: string | null
+          responsible?: string | null
+          severity?: string
+          sort_order?: number | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          company_id?: string
+          created_at?: string
+          description?: string | null
+          document_url?: string | null
+          due_date?: string | null
+          id?: string
+          item_name?: string
+          notes?: string | null
+          responsible?: string | null
+          severity?: string
+          sort_order?: number | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      dd_documents: {
+        Row: {
+          ai_analysis: string | null
+          category: string
+          checklist_item_id: string | null
+          company_id: string
+          created_at: string
+          file_name: string
+          file_size: number | null
+          file_url: string
+          id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          ai_analysis?: string | null
+          category: string
+          checklist_item_id?: string | null
+          company_id: string
+          created_at?: string
+          file_name: string
+          file_size?: number | null
+          file_url: string
+          id?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          ai_analysis?: string | null
+          category?: string
+          checklist_item_id?: string | null
+          company_id?: string
+          created_at?: string
+          file_name?: string
+          file_size?: number | null
+          file_url?: string
+          id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       deep_dive_results: {
         Row: {
           company_id: string
