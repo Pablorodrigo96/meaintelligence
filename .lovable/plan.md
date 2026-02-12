@@ -1,44 +1,66 @@
 
 
-# Correcao: Status e Prazos nao editaveis no PMI
+# PMI - Botoes de Excluir, Editar e Incluir Atividades
 
-## Problema Identificado
-
-Existem **duas causas raiz**:
-
-### Causa 1 - Textos incompativeis entre banco e codigo
-Quando o playbook foi inicializado no banco de dados, as atividades continham o texto "Desktop". Depois, substituimos todas as ocorrencias por "Compradora" no codigo. O sistema faz o match entre banco e codigo comparando o texto exato da atividade (`d.activity === item.activity`), entao **36 atividades** com "Desktop" no banco nao sao encontradas, ficam sem `dbId`, e qualquer tentativa de alterar status ou prazo e silenciosamente ignorada.
-
-### Causa 2 - Closure desatualizada nos callbacks
-As funcoes `updateStatus`, `updateDueDate` e `updateResponsible` usam `useCallback` com dependencia em `[activities]`. Ao alterar rapidamente multiplos itens, a referencia ao array `activities` pode estar desatualizada, fazendo o `find()` falhar.
+## Resumo
+Adicionar funcionalidades de CRUD completo na tabela de atividades do PMI: botao para **incluir** nova atividade, botao para **editar** uma atividade existente, e botao para **excluir** uma atividade.
 
 ---
 
-## Solucao
+## 1. Botao de Incluir Nova Atividade
 
-### 1. Migracao no banco de dados
-Atualizar os textos no banco para substituir "Desktop" por "Compradora" nas atividades ja salvas:
+- Adicionar um botao "Nova Atividade" no topo da secao Playbook (ao lado dos filtros)
+- Ao clicar, abre um Dialog/modal com formulario contendo os campos:
+  - Grupo (select com PMI_GROUPS)
+  - Disciplina (texto)
+  - Area/Tema (texto)
+  - Milestone (texto)
+  - Atividade (texto)
+  - Prazo/Deadline (select com DEADLINE_ORDER: D15, D30, D45, D60, D90, D180+)
+  - Responsavel (texto, opcional)
+  - Data Prazo (date picker, opcional)
+- Ao salvar, insere no banco de dados via Supabase e atualiza a lista local
 
-```sql
-UPDATE public.pmi_activities
-SET activity = REPLACE(activity, 'Desktop', 'Compradora'),
-    milestone = REPLACE(milestone, 'Desktop', 'Compradora');
-```
+## 2. Botao de Editar Atividade
 
-### 2. Melhorar a logica de matching
-Em vez de depender do texto exato da atividade, usar um Map indexado por `dbId` para acesso direto. Tambem adicionar fallback no matching para lidar com pequenas variacoes.
+- Adicionar um icone de edicao (Pencil) em cada linha da tabela, numa coluna "Acoes"
+- Ao clicar, abre o mesmo Dialog/modal preenchido com os dados atuais da atividade
+- Permite alterar todos os campos (grupo, disciplina, area, milestone, atividade, deadline)
+- Ao salvar, atualiza no banco e na lista local
 
-### 3. Corrigir closures com ref
-Usar `useRef` para manter uma referencia sempre atualizada do array `activities`, evitando problemas de closure nos callbacks. Os callbacks passarao a ler de `activitiesRef.current` em vez do valor capturado no closure.
+## 3. Botao de Excluir Atividade
+
+- Adicionar um icone de lixeira (Trash2) na mesma coluna "Acoes"
+- Ao clicar, exibe um AlertDialog de confirmacao ("Tem certeza que deseja excluir esta atividade?")
+- Ao confirmar, remove do banco e da lista local
 
 ---
 
-## Arquivos modificados
+## Detalhes Tecnicos
 
-- **`src/pages/PMI.tsx`**:
-  - Adicionar `activitiesRef` (useRef) sincronizado com `activities`
-  - Alterar `updateStatus`, `updateResponsible`, `updateDueDate` para usar `activitiesRef.current`
-  - Remover `[activities]` como dependencia dos callbacks (usar `[]` ja que leem da ref)
+### Nova coluna na tabela
+Adicionar uma coluna "Acoes" ao final da tabela com os icones de Editar e Excluir.
 
-- **Migracao SQL**: Atualizar textos existentes no banco
+### Componente de Dialog
+Criar um componente `PMIActivityDialog.tsx` em `src/components/pmi/` que sera reutilizado para incluir e editar. Ele recebera:
+- `open` / `onOpenChange` para controlar visibilidade
+- `activity?` (dados existentes para modo edicao, undefined para modo inclusao)
+- `onSave` callback
+
+### Funcoes no PMI.tsx
+- `addActivity(data)`: insere no banco via Supabase, gera novo id local, atualiza state
+- `editActivity(activityId, data)`: atualiza os campos no banco (group_name, discipline, area, milestone, activity, deadline), atualiza state
+- `deleteActivity(activityId)`: remove do banco pelo dbId, remove do state
+
+### Icones Lucide
+- `Plus` para o botao de nova atividade
+- `Pencil` para editar
+- `Trash2` para excluir
+
+### Arquivos modificados
+- `src/pages/PMI.tsx` -- adicionar botao "Nova Atividade", coluna Acoes, funcoes de CRUD, states para o dialog
+- `src/components/pmi/PMIActivityDialog.tsx` (novo) -- formulario modal reutilizavel para criar/editar atividades
+
+### Observacao sobre dados hibridos
+Atividades criadas pelo usuario serao salvas apenas no banco (nao no playbook estatico). O sistema precisa carregar atividades do banco como fonte primaria quando o playbook ja esta inicializado, combinando as atividades do playbook estatico com as adicionadas manualmente.
 
