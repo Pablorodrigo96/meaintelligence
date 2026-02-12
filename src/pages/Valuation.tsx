@@ -132,6 +132,25 @@ export default function Valuation() {
           )}
         </div>
       )}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-display flex items-center gap-2">
+            <Calculator className="w-5 h-5 text-primary" />
+            Ferramenta Adicional de Valuation
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <iframe
+            src="https://vcedealflow.lovable.app/valuation"
+            title="Valuation Tool"
+            width="100%"
+            height="800"
+            frameBorder="0"
+            className="rounded-lg border border-border"
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
