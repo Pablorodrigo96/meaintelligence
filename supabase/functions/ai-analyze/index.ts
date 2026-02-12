@@ -93,6 +93,24 @@ Return ONLY a JSON array.`;
         userPrompt = `Company: ${JSON.stringify(data.company)}\nDocument content: ${data.documentText || "No document provided"}\n\nReturn JSON: {"ai_report": "...", "risk_items": [...], "status": "completed"}`;
         break;
 
+      case "due-diligence-full":
+        systemPrompt = `You are a senior M&A due diligence analyst specializing in the Brazilian market. You must analyze ALL data provided (company info, checklist status, documents) and produce a comprehensive structured report. ALL responses must be in Portuguese (Brazil).
+
+Return ONLY valid JSON with this structure:
+{
+  "summary": "Executive summary of the DD findings (2-3 paragraphs in Portuguese)",
+  "category_scores": [{"category": "financeiro", "score": 0-100, "analysis": "brief analysis"}...],
+  "risk_items": [{"category": "...", "severity": "low|medium|high|critical", "description": "...", "recommendation": "..."}...],
+  "verdict": "go|no-go|conditional",
+  "justification": "Detailed justification for the verdict in Portuguese"
+}`;
+        userPrompt = `Company: ${JSON.stringify(data.company)}
+Checklist items (${data.checklist?.length || 0} total): ${JSON.stringify(data.checklist?.map((i: any) => ({ category: i.category, item: i.item_name, status: i.status, severity: i.severity, notes: i.notes })))}
+Documents analyzed: ${JSON.stringify(data.documents)}
+
+Provide a comprehensive due diligence analysis.`;
+        break;
+
       case "valuation":
         systemPrompt = "You are a financial valuation expert. Calculate company valuation using DCF and EBITDA multiple methods. Return JSON with dcf_value, ebitda_value, sensitivity_data (array for chart), and analysis text.";
         userPrompt = `Company financials: ${JSON.stringify(data.financials)}\nParameters: growth_rate=${data.growthRate}%, discount_rate=${data.discountRate}%, ebitda_multiple=${data.ebitdaMultiple}x\n\nReturn JSON: {"dcf_value": ..., "ebitda_value": ..., "sensitivity_data": [{"growth_rate": ..., "value": ...}], "analysis": "..."}`;
