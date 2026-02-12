@@ -14,16 +14,47 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
 import { haversineDistance } from "@/lib/geo";
 import { DeepDiveDialog } from "@/components/DeepDiveDialog";
 
-const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Agribusiness", "Logistics", "Telecom", "Education", "Other"];
-const companySizes = ["Startup", "Small", "Medium", "Large", "Enterprise"];
-const riskLevels = ["Low", "Medium", "High"];
+const sectors = [
+  { value: "Technology", label: "Tecnologia" },
+  { value: "Healthcare", label: "Saúde" },
+  { value: "Finance", label: "Finanças" },
+  { value: "Manufacturing", label: "Manufatura" },
+  { value: "Energy", label: "Energia" },
+  { value: "Retail", label: "Varejo" },
+  { value: "Real Estate", label: "Imobiliário" },
+  { value: "Agribusiness", label: "Agronegócio" },
+  { value: "Logistics", label: "Logística" },
+  { value: "Telecom", label: "Telecom" },
+  { value: "Education", label: "Educação" },
+  { value: "Other", label: "Outro" },
+];
+const companySizes = [
+  { value: "Startup", label: "Startup" },
+  { value: "Small", label: "Pequena" },
+  { value: "Medium", label: "Média" },
+  { value: "Large", label: "Grande" },
+  { value: "Enterprise", label: "Corporação" },
+];
+const riskLevels = [
+  { value: "Low", label: "Baixo" },
+  { value: "Medium", label: "Médio" },
+  { value: "High", label: "Alto" },
+];
+const investorProfiles = [
+  { value: "Agressivo", label: "Agressivo", desc: "Prioriza crescimento e oportunidades de expansão" },
+  { value: "Moderado", label: "Moderado", desc: "Equilíbrio entre crescimento e segurança" },
+  { value: "Conservador", label: "Conservador", desc: "Prioriza segurança financeira e baixo risco" },
+];
+
+const sectorLabel = (value: string | null) => sectors.find((s) => s.value === value)?.label || value || "—";
 
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
@@ -39,6 +70,14 @@ interface MatchDimensions {
   size_fit: number;
   location_fit: number;
   risk_fit: number;
+}
+
+interface DimensionExplanations {
+  financial_fit?: string;
+  sector_fit?: string;
+  size_fit?: string;
+  location_fit?: string;
+  risk_fit?: string;
 }
 
 interface MatchResult {
@@ -57,7 +96,17 @@ interface MatchResult {
     size: string | null;
     risk_level: string | null;
     description: string | null;
+    cnpj: string | null;
+    state: string | null;
+    city: string | null;
   } | null;
+}
+
+/** Calcula % de completude dos dados de uma empresa */
+function calcCompleteness(c: { revenue?: number | null; ebitda?: number | null; cnpj?: string | null; sector?: string | null; state?: string | null; city?: string | null }): number {
+  const fields = [c.revenue, c.ebitda, c.cnpj, c.sector, c.state || c.city];
+  const filled = fields.filter((f) => f != null && f !== "").length;
+  return Math.round((filled / fields.length) * 100);
 }
 
 export default function Matching() {
@@ -69,6 +118,7 @@ export default function Matching() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [minScoreFilter, setMinScoreFilter] = useState([0]);
   const [deepDiveOpen, setDeepDiveOpen] = useState(false);
+  const [investorProfile, setInvestorProfile] = useState("Moderado");
 
   const [criteria, setCriteria] = useState({
     target_sector: "",
@@ -139,15 +189,11 @@ export default function Matching() {
     if (criteria.min_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? 0) >= Number(criteria.min_ebitda));
     if (criteria.max_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? Infinity) <= Number(criteria.max_ebitda));
     if (criteria.target_size) filtered = filtered.filter((c) => c.size === criteria.target_size);
-    // State filter
-    if (criteria.target_state) filtered = filtered.filter((c) => (c as any).state === criteria.target_state);
-    // Geo radius filter
+    if (criteria.target_state) filtered = filtered.filter((c) => c.state === criteria.target_state);
     if (!criteria.no_geo_limit && refCityData) {
       filtered = filtered.filter((c) => {
-        const lat = (c as any).latitude;
-        const lng = (c as any).longitude;
-        if (lat == null || lng == null) return true; // include companies without coords
-        const dist = haversineDistance(refCityData.lat, refCityData.lng, lat, lng);
+        if (c.latitude == null || c.longitude == null) return true;
+        const dist = haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude);
         return dist <= criteria.geo_radius_km;
       });
     }
@@ -157,8 +203,8 @@ export default function Matching() {
   // Count companies with/without coordinates for geo info
   const geoInfo = useMemo(() => {
     if (criteria.no_geo_limit || !refCityData) return null;
-    const withCoords = filteredCompanies.filter((c) => (c as any).latitude != null).length;
-    const withoutCoords = filteredCompanies.filter((c) => (c as any).latitude == null).length;
+    const withCoords = filteredCompanies.filter((c) => c.latitude != null).length;
+    const withoutCoords = filteredCompanies.filter((c) => c.latitude == null).length;
     return { withCoords, withoutCoords };
   }, [filteredCompanies, criteria.no_geo_limit, refCityData]);
 
@@ -167,13 +213,21 @@ export default function Matching() {
     return criteria.target_state ? getCitiesByState(criteria.target_state) : BRAZILIAN_CITIES;
   }, [criteria.target_state]);
 
+  // Completeness stats for filtered companies
+  const completenessStats = useMemo(() => {
+    if (filteredCompanies.length === 0) return null;
+    const scores = filteredCompanies.map((c) => calcCompleteness(c));
+    const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+    const withCnpj = filteredCompanies.filter((c) => c.cnpj).length;
+    return { avg, withCnpj, total: filteredCompanies.length };
+  }, [filteredCompanies]);
+
   // Run matching mutation with dedup
   const runMatchMutation = useMutation({
     mutationFn: async () => {
       if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios. Adicione empresas ou amplie os filtros.");
 
-      // Build criteria for save
-      const saveCriteria: Record<string, any> = {
+      const saveCriteria = {
         user_id: user!.id,
         target_sector: criteria.target_sector || null,
         target_size: criteria.target_size || null,
@@ -189,16 +243,15 @@ export default function Matching() {
         geo_longitude: refCityData?.lng ?? null,
       };
 
-      await supabase.from("match_criteria").insert(saveCriteria as any);
+      await supabase.from("match_criteria").insert(saveCriteria);
 
       // Dedup: delete old "new" matches
       await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
 
       // Enrich companies with distance info for AI
       const companiesWithGeo = filteredCompanies.map((c) => {
-        const co = c as any;
-        const dist = refCityData && co.latitude != null && co.longitude != null
-          ? haversineDistance(refCityData.lat, refCityData.lng, co.latitude, co.longitude)
+        const dist = refCityData && c.latitude != null && c.longitude != null
+          ? haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude)
           : null;
         return { ...c, distance_km: dist ? Math.round(dist) : null };
       });
@@ -214,6 +267,7 @@ export default function Matching() {
               radius_km: criteria.no_geo_limit ? null : criteria.geo_radius_km,
             },
             companies: companiesWithGeo,
+            investor_profile: investorProfile,
           },
         },
       });
@@ -231,6 +285,7 @@ export default function Matching() {
             ai_analysis: JSON.stringify({
               analysis: match.analysis,
               dimensions: match.dimensions,
+              dimension_explanations: match.dimension_explanations,
               recommendation: match.recommendation,
             }),
             status: "new",
@@ -253,13 +308,13 @@ export default function Matching() {
     queryClient.invalidateQueries({ queryKey: ["matches"] });
   };
 
-  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; recommendation: string } => {
-    if (!raw) return { analysis: "", dimensions: null, recommendation: "" };
+  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string } => {
+    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "" };
     try {
       const parsed = JSON.parse(raw);
-      return { analysis: parsed.analysis || raw, dimensions: parsed.dimensions || null, recommendation: parsed.recommendation || "" };
+      return { analysis: parsed.analysis || raw, dimensions: parsed.dimensions || null, dimension_explanations: parsed.dimension_explanations || null, recommendation: parsed.recommendation || "" };
     } catch {
-      return { analysis: raw, dimensions: null, recommendation: "" };
+      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "" };
     }
   };
 
@@ -288,7 +343,7 @@ export default function Matching() {
 
   const sectorDistribution = useMemo(() => {
     const map: Record<string, number> = {};
-    matches.forEach((m) => { const s = m.companies?.sector || "Desconhecido"; map[s] = (map[s] || 0) + 1; });
+    matches.forEach((m) => { const s = sectorLabel(m.companies?.sector || null); map[s] = (map[s] || 0) + 1; });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [matches]);
 
@@ -321,10 +376,18 @@ export default function Matching() {
 
   const formatCurrency = (val: number | null) => {
     if (val == null) return "N/A";
-    if (val >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
-    if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
-    if (val >= 1e3) return `$${(val / 1e3).toFixed(0)}K`;
-    return `$${val}`;
+    if (val >= 1e9) return `R$${(val / 1e9).toFixed(1)}B`;
+    if (val >= 1e6) return `R$${(val / 1e6).toFixed(1)}M`;
+    if (val >= 1e3) return `R$${(val / 1e3).toFixed(0)}K`;
+    return `R$${val}`;
+  };
+
+  const dimLabels: Record<string, string> = {
+    financial_fit: "Financeiro",
+    sector_fit: "Setor",
+    size_fit: "Tamanho",
+    location_fit: "Localização",
+    risk_fit: "Risco",
   };
 
   return (
@@ -354,12 +417,34 @@ export default function Matching() {
               <CardContent className="flex flex-wrap gap-2">
                 {criteriaHistory.map((c: any) => (
                   <Button key={c.id} variant="outline" size="sm" onClick={() => loadCriteria(c)} className="text-xs">
-                    {c.target_sector || "Todos"} · {c.target_location || "Brasil"} · {c.geo_reference_city ? `${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""} · {new Date(c.created_at).toLocaleDateString()}
+                    {sectorLabel(c.target_sector) || "Todos"} · {c.target_location || "Brasil"} · {c.geo_reference_city ? `${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""} · {new Date(c.created_at).toLocaleDateString()}
                   </Button>
                 ))}
               </CardContent>
             </Card>
           )}
+
+          {/* Investor Profile */}
+          <Card className="border-primary/20 bg-primary/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="font-display flex items-center gap-2 text-base"><UserCheck className="w-5 h-5 text-primary" />Perfil do Investidor</CardTitle>
+              <CardDescription>Define como a IA prioriza as dimensões de compatibilidade</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-3 gap-3">
+                {investorProfiles.map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => setInvestorProfile(p.value)}
+                    className={`rounded-lg border p-3 text-left transition-all ${investorProfile === p.value ? "border-primary bg-primary/10 ring-1 ring-primary" : "border-border hover:border-primary/40"}`}
+                  >
+                    <p className="font-semibold text-sm">{p.label}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{p.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Left column: strategic + geo criteria */}
@@ -375,14 +460,14 @@ export default function Matching() {
                       <Label>Setor Alvo</Label>
                       <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
                         <SelectTrigger><SelectValue placeholder="Qualquer setor" /></SelectTrigger>
-                        <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                        <SelectContent>{sectors.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Tamanho da Empresa</Label>
                       <Select value={criteria.target_size} onValueChange={(v) => setCriteria({ ...criteria, target_size: v })}>
                         <SelectTrigger><SelectValue placeholder="Qualquer tamanho" /></SelectTrigger>
-                        <SelectContent>{companySizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                        <SelectContent>{companySizes.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                   </div>
@@ -390,7 +475,7 @@ export default function Matching() {
                     <Label>Tolerância ao Risco</Label>
                     <Select value={criteria.risk_level} onValueChange={(v) => setCriteria({ ...criteria, risk_level: v })}>
                       <SelectTrigger><SelectValue placeholder="Qualquer" /></SelectTrigger>
-                      <SelectContent>{riskLevels.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                      <SelectContent>{riskLevels.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
@@ -398,113 +483,83 @@ export default function Matching() {
                     <Textarea
                       value={criteria.notes}
                       onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })}
-                      placeholder="Ex.: Buscando empresas com receita recorrente forte, idealmente SaaS, com equipe de gestão comprovada..."
-                      className="min-h-[80px]"
+                      placeholder="Contexto adicional para a IA considerar (ex.: prefiro empresas com marca forte, evitar empresas em litígio...)"
+                      rows={3}
                     />
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Geographic filter card */}
+              {/* Geographic filter */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-display flex items-center gap-2"><MapPin className="w-5 h-5 text-primary" />Filtro Geográfico</CardTitle>
-                  <CardDescription>Filtre por estado, cidade e raio de proximidade</CardDescription>
+                  <CardTitle className="font-display flex items-center gap-2"><MapPin className="w-5 h-5 text-accent" />Filtro Geográfico</CardTitle>
+                  <CardDescription>Defina a cidade de referência e o raio máximo de busca</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div className="space-y-2">
                     <Label>Estado</Label>
-                    <Select value={criteria.target_state} onValueChange={(v) => setCriteria({ ...criteria, target_state: v === "__all__" ? "" : v, geo_reference_city: "" })}>
-                      <SelectTrigger><SelectValue placeholder="Todos os estados" /></SelectTrigger>
+                    <Select value={criteria.target_state} onValueChange={(v) => setCriteria({ ...criteria, target_state: v, geo_reference_city: "" })}>
+                      <SelectTrigger><SelectValue placeholder="Qualquer estado" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__all__">Todos os estados</SelectItem>
-                        {BRAZILIAN_STATES.map((s) => (
-                          <SelectItem key={s.uf} value={s.uf}>{s.uf} — {s.name}</SelectItem>
-                        ))}
+                        {BRAZILIAN_STATES.map((s) => <SelectItem key={s.uf} value={s.uf}>{s.uf} — {s.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>Cidade de Referência</Label>
-                    <Select value={criteria.geo_reference_city} onValueChange={(v) => setCriteria({ ...criteria, geo_reference_city: v === "__none__" ? "" : v })}>
-                      <SelectTrigger><SelectValue placeholder="Selecionar cidade base" /></SelectTrigger>
+                    <Select value={criteria.geo_reference_city} onValueChange={(v) => setCriteria({ ...criteria, geo_reference_city: v })}>
+                      <SelectTrigger><SelectValue placeholder="Selecionar cidade" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__none__">Nenhuma</SelectItem>
-                        {refCitySuggestions.map((c) => (
-                          <SelectItem key={`${c.name}-${c.state}`} value={c.name}>{c.name} ({c.state})</SelectItem>
-                        ))}
+                        {refCitySuggestions.map((c) => <SelectItem key={c.name + c.state} value={c.name}>{c.name} ({c.state})</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {refCityData && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" />Lat: {refCityData.lat.toFixed(4)}, Lng: {refCityData.lng.toFixed(4)}</p>
+                    )}
                   </div>
-                  {criteria.geo_reference_city && refCityData && (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-3">
-                        <label className="flex items-center gap-2 text-sm cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={criteria.no_geo_limit}
-                            onChange={(e) => setCriteria({ ...criteria, no_geo_limit: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          Sem limite de distância
-                        </label>
-                      </div>
-                      {!criteria.no_geo_limit && (
-                        <div className="space-y-2">
-                          <Label>Raio de Busca: {criteria.geo_radius_km} km</Label>
-                          <Slider
-                            value={[criteria.geo_radius_km]}
-                            onValueChange={([v]) => setCriteria({ ...criteria, geo_radius_km: v })}
-                            min={10}
-                            max={500}
-                            step={10}
-                          />
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>10 km</span>
-                            <span>250 km</span>
-                            <span>500 km</span>
-                          </div>
-                        </div>
-                      )}
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <MapPin className="w-3 h-3" />
-                        Referência: {refCityData.name}, {refCityData.state} ({refCityData.lat.toFixed(2)}, {refCityData.lng.toFixed(2)})
-                      </p>
+                  <div className="flex items-center gap-3">
+                    <input type="checkbox" id="no_geo_limit" checked={criteria.no_geo_limit} onChange={(e) => setCriteria({ ...criteria, no_geo_limit: e.target.checked })} className="rounded" />
+                    <Label htmlFor="no_geo_limit" className="text-sm cursor-pointer">Sem limite geográfico (incluir todas as empresas)</Label>
+                  </div>
+                  {!criteria.no_geo_limit && (
+                    <div className="space-y-2">
+                      <Label>Raio de Busca: {criteria.geo_radius_km} km</Label>
+                      <Slider value={[criteria.geo_radius_km]} onValueChange={([v]) => setCriteria({ ...criteria, geo_radius_km: v })} min={10} max={3000} step={10} />
+                      <div className="flex justify-between text-xs text-muted-foreground"><span>10 km</span><span>3.000 km</span></div>
                     </div>
                   )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* Right column: financial criteria */}
-            <Card>
+            {/* Right column: financial criteria + action */}
+            <Card className="h-fit">
               <CardHeader>
-                <CardTitle className="font-display flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" />Parâmetros Financeiros</CardTitle>
-                <CardDescription>Defina limites de receita e lucratividade</CardDescription>
+                <CardTitle className="font-display flex items-center gap-2"><DollarSign className="w-5 h-5 text-accent" />Critérios Financeiros</CardTitle>
+                <CardDescription>Faixas de receita e EBITDA para pré-filtragem</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Receita Mín. ($)</Label>
+                    <Label>Receita Mín. (R$)</Label>
                     <Input type="number" value={criteria.min_revenue} onChange={(e) => setCriteria({ ...criteria, min_revenue: e.target.value })} placeholder="0" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Receita Máx. ($)</Label>
+                    <Label>Receita Máx. (R$)</Label>
                     <Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} placeholder="Sem limite" />
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>EBITDA Mín. ($)</Label>
+                    <Label>EBITDA Mín. (R$)</Label>
                     <Input type="number" value={criteria.min_ebitda} onChange={(e) => setCriteria({ ...criteria, min_ebitda: e.target.value })} placeholder="0" />
                   </div>
                   <div className="space-y-2">
-                    <Label>EBITDA Máx. ($)</Label>
+                    <Label>EBITDA Máx. (R$)</Label>
                     <Input type="number" value={criteria.max_ebitda} onChange={(e) => setCriteria({ ...criteria, max_ebitda: e.target.value })} placeholder="Sem limite" />
                   </div>
                 </div>
 
-                {/* Pre-filter preview */}
+                {/* Pre-filter preview with completeness */}
                 <div className="rounded-lg border border-border bg-muted/50 p-4 space-y-2">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <Filter className="w-4 h-4 text-muted-foreground" />
@@ -513,6 +568,19 @@ export default function Matching() {
                   <p className="text-sm text-muted-foreground">
                     <span className="font-semibold text-foreground">{filteredCompanies.length}</span> de {companies.length} empresas correspondem aos seus critérios
                   </p>
+                  {completenessStats && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <Badge variant={completenessStats.avg >= 60 ? "default" : "secondary"} className="text-xs">
+                        Dados: {completenessStats.avg}% completo
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {completenessStats.withCnpj}/{completenessStats.total} com CNPJ
+                      </Badge>
+                      {completenessStats.avg < 50 && (
+                        <span className="text-xs text-warning">⚠️ Dados limitados — análise pode ser menos precisa</span>
+                      )}
+                    </div>
+                  )}
                   {geoInfo && (
                     <p className="text-xs text-muted-foreground">
                       📍 {geoInfo.withCoords} com coordenadas · {geoInfo.withoutCoords > 0 ? `⚠️ ${geoInfo.withoutCoords} sem coordenadas (incluídas)` : "todas geolocalizadas"}
@@ -533,7 +601,7 @@ export default function Matching() {
                 {runMatchMutation.isPending && (
                   <div className="space-y-2">
                     <Progress value={undefined} className="h-1 animate-pulse" />
-                    <p className="text-xs text-center text-muted-foreground">A IA está avaliando cada empresa em 5 dimensões...</p>
+                    <p className="text-xs text-center text-muted-foreground">A IA está avaliando cada empresa em 5 dimensões (perfil: {investorProfile})...</p>
                   </div>
                 )}
               </CardContent>
@@ -601,7 +669,7 @@ export default function Matching() {
                 companies={displayMatches.slice(0, 10).map((m) => ({
                   id: m.companies?.id,
                   name: m.companies?.name,
-                  cnpj: (m.companies as any)?.cnpj,
+                  cnpj: m.companies?.cnpj,
                   sector: m.companies?.sector,
                   revenue: m.companies?.revenue,
                   ebitda: m.companies?.ebitda,
@@ -641,15 +709,17 @@ export default function Matching() {
                       <TableHead className="text-right">Receita</TableHead>
                       <TableHead className="text-right">EBITDA</TableHead>
                       <TableHead className="text-center">Score</TableHead>
+                      <TableHead>Dados</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {displayMatches.map((m) => {
-                      const { analysis, dimensions, recommendation } = parseAnalysis(m.ai_analysis);
+                      const { analysis, dimensions, dimension_explanations, recommendation } = parseAnalysis(m.ai_analysis);
                       const isExpanded = expandedMatch === m.id;
                       const score = Number(m.compatibility_score);
+                      const completeness = m.companies ? calcCompleteness(m.companies) : 0;
 
                       return (
                         <>
@@ -659,13 +729,18 @@ export default function Matching() {
                             onClick={() => setExpandedMatch(isExpanded ? null : m.id)}
                           >
                             <TableCell className="font-medium">{m.companies?.name || "Desconhecido"}</TableCell>
-                            <TableCell><Badge variant="outline" className="text-xs">{m.companies?.sector || "—"}</Badge></TableCell>
+                            <TableCell><Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge></TableCell>
                             <TableCell className="text-sm text-muted-foreground">{m.companies?.location || "—"}</TableCell>
                             <TableCell className="text-right text-sm">{formatCurrency(m.companies?.revenue ?? null)}</TableCell>
                             <TableCell className="text-right text-sm">{formatCurrency(m.companies?.ebitda ?? null)}</TableCell>
                             <TableCell className="text-center">
                               <Badge className={score >= 70 ? "bg-success/15 text-success border-0" : score >= 40 ? "bg-warning/15 text-warning border-0" : "bg-destructive/15 text-destructive border-0"}>
                                 {score}%
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-xs ${completeness < 40 ? "text-warning" : ""}`}>
+                                {completeness}%
                               </Badge>
                             </TableCell>
                             <TableCell>
@@ -685,7 +760,7 @@ export default function Matching() {
                           </TableRow>
                           {isExpanded && (
                             <TableRow key={`${m.id}-detail`}>
-                              <TableCell colSpan={8} className="bg-muted/30 p-6">
+                              <TableCell colSpan={9} className="bg-muted/30 p-6">
                                 <div className="grid gap-6 lg:grid-cols-2">
                                   <div className="space-y-4">
                                     <div>
@@ -716,24 +791,43 @@ export default function Matching() {
                                         <p className="font-semibold">{m.companies?.risk_level || "N/A"}</p>
                                       </div>
                                     </div>
+                                    {/* Dimension explanations */}
+                                    {dimension_explanations && (
+                                      <div className="space-y-2">
+                                        <h4 className="font-display font-semibold text-sm flex items-center gap-1">
+                                          <Info className="w-4 h-4 text-primary" />
+                                          Por que cada nota?
+                                        </h4>
+                                        <div className="space-y-1.5">
+                                          {Object.entries(dimension_explanations).map(([key, explanation]) => (
+                                            <div key={key} className="text-xs rounded border px-3 py-2 bg-background">
+                                              <span className="font-semibold text-foreground">{dimLabels[key] || key}:</span>{" "}
+                                              <span className="text-muted-foreground">{explanation}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                   {dimensions && (
                                     <div>
                                       <h4 className="font-display font-semibold text-sm mb-2 text-center">Dimensões de Compatibilidade</h4>
-                                      <ResponsiveContainer width="100%" height={280}>
-                                        <RadarChart data={[
-                                          { dim: "Financeiro", value: dimensions.financial_fit },
-                                          { dim: "Setor", value: dimensions.sector_fit },
-                                          { dim: "Tamanho", value: dimensions.size_fit },
-                                          { dim: "Localização", value: dimensions.location_fit },
-                                          { dim: "Risco", value: dimensions.risk_fit },
-                                        ]}>
-                                          <PolarGrid stroke="hsl(var(--border))" />
-                                          <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
-                                          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
-                                          <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
-                                        </RadarChart>
-                                      </ResponsiveContainer>
+                                      <TooltipProvider>
+                                        <ResponsiveContainer width="100%" height={280}>
+                                          <RadarChart data={[
+                                            { dim: "Financeiro", value: dimensions.financial_fit },
+                                            { dim: "Setor", value: dimensions.sector_fit },
+                                            { dim: "Tamanho", value: dimensions.size_fit },
+                                            { dim: "Localização", value: dimensions.location_fit },
+                                            { dim: "Risco", value: dimensions.risk_fit },
+                                          ]}>
+                                            <PolarGrid stroke="hsl(var(--border))" />
+                                            <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
+                                            <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
+                                            <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
+                                          </RadarChart>
+                                        </ResponsiveContainer>
+                                      </TooltipProvider>
                                     </div>
                                   )}
                                 </div>
@@ -768,7 +862,7 @@ export default function Matching() {
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis dataKey="range" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
                       <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} allowDecimals={false} />
-                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                       <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -784,7 +878,7 @@ export default function Matching() {
                           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                     </PieChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -797,7 +891,7 @@ export default function Matching() {
                       <div key={c.id} className="flex items-center gap-4 rounded-lg border p-3">
                         <div className="h-2 w-2 rounded-full bg-primary" />
                         <div className="flex-1">
-                          <p className="text-sm font-medium">{c.target_sector || "Todos os setores"} · {c.target_location || "Brasil"} {c.geo_reference_city ? `· ${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""}</p>
+                          <p className="text-sm font-medium">{sectorLabel(c.target_sector) || "Todos os setores"} · {c.target_location || "Brasil"} {c.geo_reference_city ? `· ${c.geo_reference_city} (${c.geo_radius_km || "∞"}km)` : ""}</p>
                           <p className="text-xs text-muted-foreground">
                             Receita: {c.min_revenue ? formatCurrency(c.min_revenue) : "Qualquer"} – {c.max_revenue ? formatCurrency(c.max_revenue) : "Qualquer"}
                           </p>

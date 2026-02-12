@@ -14,8 +14,29 @@ import { Building2, Plus, Search, Pencil, Trash2, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { BRAZILIAN_STATES, findCity, getCitiesByState } from "@/data/brazilian-cities";
 
-const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Other"];
-const sizes = ["Small (<$10M)", "Medium ($10M-$100M)", "Large ($100M-$1B)", "Enterprise (>$1B)"];
+const sectors = [
+  { value: "Technology", label: "Tecnologia" },
+  { value: "Healthcare", label: "Saúde" },
+  { value: "Finance", label: "Finanças" },
+  { value: "Manufacturing", label: "Manufatura" },
+  { value: "Energy", label: "Energia" },
+  { value: "Retail", label: "Varejo" },
+  { value: "Real Estate", label: "Imobiliário" },
+  { value: "Agribusiness", label: "Agronegócio" },
+  { value: "Logistics", label: "Logística" },
+  { value: "Telecom", label: "Telecom" },
+  { value: "Education", label: "Educação" },
+  { value: "Other", label: "Outro" },
+];
+
+const sizes = [
+  { value: "Small", label: "Pequena (<R$50M)" },
+  { value: "Medium", label: "Média (R$50M-R$500M)" },
+  { value: "Large", label: "Grande (R$500M-R$5B)" },
+  { value: "Enterprise", label: "Corporação (>R$5B)" },
+];
+
+const sectorLabel = (value: string | null) => sectors.find((s) => s.value === value)?.label || value || "—";
 
 function riskBadge(level: string | null) {
   const colors: Record<string, string> = { low: "bg-success/10 text-success", medium: "bg-warning/10 text-warning", high: "bg-destructive/10 text-destructive" };
@@ -25,10 +46,10 @@ function riskBadge(level: string | null) {
 
 function formatCurrency(val: number | null) {
   if (val == null) return "—";
-  if (val >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
-  if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
-  if (val >= 1e3) return `$${(val / 1e3).toFixed(0)}K`;
-  return `$${val.toLocaleString()}`;
+  if (val >= 1e9) return `R$${(val / 1e9).toFixed(1)}B`;
+  if (val >= 1e6) return `R$${(val / 1e6).toFixed(1)}M`;
+  if (val >= 1e3) return `R$${(val / 1e3).toFixed(0)}K`;
+  return `R$${val.toLocaleString("pt-BR")}`;
 }
 
 const emptyCompany = { name: "", cnpj: "", sector: "", state: "", city: "", size: "", description: "", revenue: "", ebitda: "", cash_flow: "", debt: "", risk_level: "medium" };
@@ -67,7 +88,7 @@ export default function Companies() {
     mutationFn: async (values: typeof form) => {
       const cityData = findCity(values.city, values.state);
       const location = values.city && values.state ? `${values.city}, ${values.state}` : values.city || values.state || null;
-      const payload: Record<string, any> = {
+      const payload = {
         name: values.name,
         cnpj: values.cnpj ? values.cnpj.replace(/\D/g, "") : null,
         sector: values.sector || null,
@@ -86,10 +107,10 @@ export default function Companies() {
         user_id: user!.id,
       };
       if (editingId) {
-        const { error } = await supabase.from("companies").update(payload as any).eq("id", editingId);
+        const { error } = await supabase.from("companies").update(payload).eq("id", editingId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("companies").insert(payload as any);
+        const { error } = await supabase.from("companies").insert(payload);
         if (error) throw error;
       }
     },
@@ -120,11 +141,11 @@ export default function Companies() {
     return matchesSearch && matchesSector;
   });
 
-  const openEdit = (c: any) => {
+  const openEdit = (c: typeof companies[number]) => {
     setEditingId(c.id);
     setForm({
       name: c.name,
-      cnpj: (c as any).cnpj || "",
+      cnpj: c.cnpj || "",
       sector: c.sector || "",
       state: c.state || "",
       city: c.city || "",
@@ -163,7 +184,7 @@ export default function Companies() {
                 <div className="space-y-2"><Label>Setor</Label>
                   <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
                     <SelectTrigger><SelectValue placeholder="Selecionar setor" /></SelectTrigger>
-                    <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    <SelectContent>{sectors.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
@@ -201,7 +222,7 @@ export default function Companies() {
                 <div className="space-y-2"><Label>Tamanho</Label>
                   <Select value={form.size} onValueChange={(v) => setForm({ ...form, size: v })}>
                     <SelectTrigger><SelectValue placeholder="Selecionar tamanho" /></SelectTrigger>
-                    <SelectContent>{sizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    <SelectContent>{sizes.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2"><Label>Nível de Risco</Label>
@@ -214,10 +235,10 @@ export default function Companies() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Receita ($)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
-                <div className="space-y-2"><Label>EBITDA ($)</Label><Input type="number" value={form.ebitda} onChange={(e) => setForm({ ...form, ebitda: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Fluxo de Caixa ($)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Dívida ($)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Receita (R$)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
+                <div className="space-y-2"><Label>EBITDA (R$)</Label><Input type="number" value={form.ebitda} onChange={(e) => setForm({ ...form, ebitda: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Fluxo de Caixa (R$)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Dívida (R$)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
               </div>
               <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
               <Button type="submit" className="w-full" disabled={saveMutation.isPending}>{saveMutation.isPending ? "Salvando..." : editingId ? "Atualizar" : "Criar"}</Button>
@@ -235,7 +256,7 @@ export default function Companies() {
           <SelectTrigger className="w-48"><SelectValue placeholder="Todos os Setores" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos os Setores</SelectItem>
-            {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {sectors.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -253,7 +274,7 @@ export default function Companies() {
                   <div className="p-2 rounded-lg bg-muted"><Building2 className="w-5 h-5 text-primary" /></div>
                   <div>
                     <CardTitle className="text-base font-display">{c.name}</CardTitle>
-                    <p className="text-xs text-muted-foreground">{c.sector} · {c.location || `${(c as any).city || ""}, ${(c as any).state || ""}`}</p>
+                    <p className="text-xs text-muted-foreground">{sectorLabel(c.sector)} · {c.location || `${c.city || ""}, ${c.state || ""}`}</p>
                   </div>
                 </div>
                 {riskBadge(c.risk_level)}
