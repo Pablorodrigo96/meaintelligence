@@ -293,10 +293,12 @@ export type Database = {
           created_at: string
           deadline: string
           discipline: string
+          due_date: string | null
           group_name: string
           id: string
           milestone: string
           notes: string | null
+          responsible: string | null
           status: string
           transaction_id: string | null
           updated_at: string
@@ -308,10 +310,12 @@ export type Database = {
           created_at?: string
           deadline: string
           discipline: string
+          due_date?: string | null
           group_name: string
           id?: string
           milestone: string
           notes?: string | null
+          responsible?: string | null
           status?: string
           transaction_id?: string | null
           updated_at?: string
@@ -323,10 +327,12 @@ export type Database = {
           created_at?: string
           deadline?: string
           discipline?: string
+          due_date?: string | null
           group_name?: string
           id?: string
           milestone?: string
           notes?: string | null
+          responsible?: string | null
           status?: string
           transaction_id?: string | null
           updated_at?: string
