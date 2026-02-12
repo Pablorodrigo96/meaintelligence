@@ -1,62 +1,36 @@
 
-## Plano: Adicionar Embed de Valuation Externo
 
-### Contexto Atual
-A página `Valuation.tsx` apresenta:
-- Um formulário de seleção de empresa com parâmetros (taxa de crescimento, taxa de desconto, múltiplo EBITDA)
-- Cálculo de valuation via edge function `ai-analyze`
-- Exibição de resultados (DCF e EBITDA) com análise de sensibilidade
+# Simplificar Pagina de Valuation
 
-### Solução Proposta
-Adicionar um iframe que embeda o site `https://vcedealflow.lovable.app/valuation` como complemento à ferramenta atual. O embed será colocado abaixo dos resultados (ou em uma aba separada) para não interferir com o fluxo existente.
+## O que muda
 
-### Abordagem
-1. **Localização do Embed**: Adicionar após a seção de resultados (linha 134)
-2. **Estrutura HTML**: Um `<iframe>` com:
-   - `src="https://vcedealflow.lovable.app/valuation"`
-   - `title="Valuation External Tool"`
-   - `width="100%"` e `height="800px"` (responsivo)
-   - `border="0"` e classes Tailwind para estilo consistente
-   - `allowFullScreen` para permitir modo tela cheia se necessário
+Remover todo o calculador basico (selecao de empresa, sliders, botao "Calcular Valuation" e resultados) e deixar apenas o iframe do vcedealflow como ferramenta principal de valuation.
 
-3. **Estilo e Responsividade**:
-   - Envolver o iframe em um `Card` (consistente com design)
-   - Adicionar título "Ferramenta Adicional de Valuation"
-   - Ajustar altura para mobile (ex: `min-h-[600px]` em mobile, `min-h-[800px]` em desktop)
-   - Aplicar border e rounded corners do design system
+## Limitacao tecnica: Login automatico
 
-4. **Segurança**:
-   - Usar `sandbox="allow-same-origin allow-scripts allow-popups allow-forms"` se necessário interatividade completa
-   - O site é seu (`vcedealflow.lovable.app`), então é seguro
+Como os dois sites sao projetos separados com bancos de dados independentes, **nao e possivel fazer login automatico** no iframe. O navegador bloqueia interacoes de autenticacao entre dominios diferentes (politica de same-origin). O usuario precisara fazer login manualmente uma vez dentro do iframe -- apos isso a sessao fica salva no navegador.
 
-### Arquivo a Modificar
-- `src/pages/Valuation.tsx` -- inserir Card com iframe após os resultados
+## Arquivo modificado
 
-### Código Adicionado (aproximadamente linhas 134-142)
-```jsx
-<Card>
-  <CardHeader>
-    <CardTitle className="font-display flex items-center gap-2">
-      <Calculator className="w-5 h-5 text-primary" />
-      Ferramenta Adicional de Valuation
-    </CardTitle>
-  </CardHeader>
-  <CardContent>
-    <iframe
-      src="https://vcedealflow.lovable.app/valuation"
-      title="Valuation Tool"
-      width="100%"
-      height="800"
-      frameBorder="0"
-      className="rounded-lg border border-border"
-    />
-  </CardContent>
-</Card>
-```
+**src/pages/Valuation.tsx**
 
-### Vantagens
-- Não interfere com a ferramenta existente
-- Usuário pode usar ambas as ferramentas na mesma página
-- Design consistente com o resto da plataforma
-- Simples de implementar e manter
+### Remover
+- Todos os states (selectedCompany, growthRate, discountRate, ebitdaMultiple, result)
+- Queries de companies e valuations
+- Mutation de valuation
+- Funcao formatVal
+- Card "Parametros de Valuation" inteiro (select, sliders, botao)
+- Card de resultados (DCF, EBITDA, sensibilidade)
+- Imports nao utilizados (useState, useQuery, useMutation, Slider, Select, Label, LineChart, etc.)
+
+### Manter
+- Titulo e descricao da pagina
+- Card com iframe do vcedealflow (agora como conteudo principal)
+- Atualizar titulo do Card para "Valuation" (remover "Ferramenta Adicional")
+
+### Resultado final
+Pagina limpa com:
+1. Titulo "Valuation de Empresa"
+2. Subtitulo descritivo
+3. Card unico com iframe em tela cheia (`height="800"`)
 
