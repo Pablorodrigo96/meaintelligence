@@ -1,26 +1,85 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Search, Zap, Star, X } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Slider } from "@/components/ui/slider";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
 
-const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Other"];
+const sectors = ["Technology", "Healthcare", "Finance", "Manufacturing", "Energy", "Retail", "Real Estate", "Agribusiness", "Logistics", "Telecom", "Education", "Other"];
+const regions = ["Brazil", "Latin America", "North America", "Europe", "Asia-Pacific", "Middle East & Africa", "Global"];
+const companySizes = ["Startup", "Small", "Medium", "Large", "Enterprise"];
+const riskLevels = ["Low", "Medium", "High"];
+
+const CHART_COLORS = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+];
+
+interface MatchDimensions {
+  financial_fit: number;
+  sector_fit: number;
+  size_fit: number;
+  location_fit: number;
+  risk_fit: number;
+}
+
+interface MatchResult {
+  id: string;
+  compatibility_score: number;
+  ai_analysis: string;
+  status: string;
+  created_at: string;
+  companies: {
+    id: string;
+    name: string;
+    sector: string | null;
+    location: string | null;
+    revenue: number | null;
+    ebitda: number | null;
+    size: string | null;
+    risk_level: string | null;
+    description: string | null;
+  } | null;
+}
 
 export default function Matching() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [criteria, setCriteria] = useState({ target_sector: "", target_size: "", target_location: "", min_revenue: "", max_revenue: "", min_ebitda: "", max_ebitda: "", notes: "" });
+  const [activeTab, setActiveTab] = useState("criteria");
+  const [expandedMatch, setExpandedMatch] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [minScoreFilter, setMinScoreFilter] = useState([0]);
 
+  const [criteria, setCriteria] = useState({
+    target_sector: "",
+    target_size: "",
+    target_location: "",
+    min_revenue: "",
+    max_revenue: "",
+    min_ebitda: "",
+    max_ebitda: "",
+    risk_level: "",
+    notes: "",
+  });
+
+  // Fetch companies
   const { data: companies = [] } = useQuery({
     queryKey: ["companies"],
     queryFn: async () => {
@@ -30,38 +89,101 @@ export default function Matching() {
     },
   });
 
+  // Fetch matches with company details
   const { data: matches = [], isLoading: matchesLoading } = useQuery({
     queryKey: ["matches"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("matches").select("*, companies:seller_company_id(*)").eq("buyer_id", user!.id).order("compatibility_score", { ascending: false });
+      const { data, error } = await supabase
+        .from("matches")
+        .select("*, companies:seller_company_id(*)")
+        .eq("buyer_id", user!.id)
+        .order("compatibility_score", { ascending: false });
       if (error) throw error;
-      return data as any[];
+      return data as MatchResult[];
     },
   });
 
+  // Fetch saved criteria history
+  const { data: criteriaHistory = [] } = useQuery({
+    queryKey: ["match_criteria"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("match_criteria")
+        .select("*")
+        .eq("user_id", user!.id)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Pre-filter companies based on criteria
+  const filteredCompanies = useMemo(() => {
+    let filtered = [...companies];
+    if (criteria.target_sector) filtered = filtered.filter((c) => c.sector === criteria.target_sector);
+    if (criteria.min_revenue) filtered = filtered.filter((c) => (c.revenue ?? 0) >= Number(criteria.min_revenue));
+    if (criteria.max_revenue) filtered = filtered.filter((c) => (c.revenue ?? Infinity) <= Number(criteria.max_revenue));
+    if (criteria.min_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? 0) >= Number(criteria.min_ebitda));
+    if (criteria.max_ebitda) filtered = filtered.filter((c) => (c.ebitda ?? Infinity) <= Number(criteria.max_ebitda));
+    if (criteria.target_size) filtered = filtered.filter((c) => c.size === criteria.target_size);
+    return filtered;
+  }, [companies, criteria]);
+
+  // Run matching mutation with dedup
   const runMatchMutation = useMutation({
     mutationFn: async () => {
-      // Save criteria
-      const { error: critError } = await supabase.from("match_criteria").insert({ user_id: user!.id, ...Object.fromEntries(Object.entries(criteria).map(([k, v]) => [k, v || null]).filter(([k]) => k !== "min_revenue" && k !== "max_revenue" && k !== "min_ebitda" && k !== "max_ebitda")), min_revenue: criteria.min_revenue ? Number(criteria.min_revenue) : null, max_revenue: criteria.max_revenue ? Number(criteria.max_revenue) : null, min_ebitda: criteria.min_ebitda ? Number(criteria.min_ebitda) : null, max_ebitda: criteria.max_ebitda ? Number(criteria.max_ebitda) : null });
-      if (critError) console.error("Criteria save error:", critError);
+      if (filteredCompanies.length === 0) throw new Error("No companies match your criteria. Add companies or broaden your filters.");
 
-      const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "match", data: { criteria, companies } } });
+      // Save criteria
+      await supabase.from("match_criteria").insert({
+        user_id: user!.id,
+        target_sector: criteria.target_sector || null,
+        target_size: criteria.target_size || null,
+        target_location: criteria.target_location || null,
+        min_revenue: criteria.min_revenue ? Number(criteria.min_revenue) : null,
+        max_revenue: criteria.max_revenue ? Number(criteria.max_revenue) : null,
+        min_ebitda: criteria.min_ebitda ? Number(criteria.min_ebitda) : null,
+        max_ebitda: criteria.max_ebitda ? Number(criteria.max_ebitda) : null,
+        notes: criteria.notes || null,
+      });
+
+      // Dedup: delete old "new" matches
+      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
+
+      // Call AI
+      const { data, error } = await supabase.functions.invoke("ai-analyze", {
+        body: { type: "match", data: { criteria, companies: filteredCompanies } },
+      });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
 
       const results = Array.isArray(data.result) ? data.result : [];
       for (const match of results) {
-        const company = companies.find((c) => c.id === match.company_id);
+        const company = filteredCompanies.find((c) => c.id === match.company_id);
         if (company) {
-          await supabase.from("matches").insert({ buyer_id: user!.id, seller_company_id: company.id, compatibility_score: match.compatibility_score, ai_analysis: match.analysis, status: "new" });
+          await supabase.from("matches").insert({
+            buyer_id: user!.id,
+            seller_company_id: company.id,
+            compatibility_score: match.compatibility_score,
+            ai_analysis: JSON.stringify({
+              analysis: match.analysis,
+              dimensions: match.dimensions,
+              recommendation: match.recommendation,
+            }),
+            status: "new",
+          });
         }
       }
+      return results.length;
     },
-    onSuccess: () => {
+    onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ["matches"] });
-      toast({ title: "Matching complete!", description: "AI has analyzed compatible companies." });
+      queryClient.invalidateQueries({ queryKey: ["match_criteria"] });
+      setActiveTab("results");
+      toast({ title: "Matching completo!", description: `${count} empresas analisadas pela IA.` });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const updateStatus = async (id: string, status: string) => {
@@ -69,63 +191,498 @@ export default function Matching() {
     queryClient.invalidateQueries({ queryKey: ["matches"] });
   };
 
+  // Parse AI analysis JSON safely
+  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; recommendation: string } => {
+    if (!raw) return { analysis: "", dimensions: null, recommendation: "" };
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        analysis: parsed.analysis || raw,
+        dimensions: parsed.dimensions || null,
+        recommendation: parsed.recommendation || "",
+      };
+    } catch {
+      return { analysis: raw, dimensions: null, recommendation: "" };
+    }
+  };
+
+  // Filtered matches for results tab
+  const displayMatches = useMemo(() => {
+    let result = [...matches];
+    if (statusFilter !== "all") result = result.filter((m) => m.status === statusFilter);
+    result = result.filter((m) => Number(m.compatibility_score) >= minScoreFilter[0]);
+    return result;
+  }, [matches, statusFilter, minScoreFilter]);
+
+  // Analytics data
+  const scoreDistribution = useMemo(() => {
+    const buckets = [
+      { range: "0-20", count: 0 },
+      { range: "21-40", count: 0 },
+      { range: "41-60", count: 0 },
+      { range: "61-80", count: 0 },
+      { range: "81-100", count: 0 },
+    ];
+    matches.forEach((m) => {
+      const s = Number(m.compatibility_score);
+      if (s <= 20) buckets[0].count++;
+      else if (s <= 40) buckets[1].count++;
+      else if (s <= 60) buckets[2].count++;
+      else if (s <= 80) buckets[3].count++;
+      else buckets[4].count++;
+    });
+    return buckets;
+  }, [matches]);
+
+  const sectorDistribution = useMemo(() => {
+    const map: Record<string, number> = {};
+    matches.forEach((m) => {
+      const sector = m.companies?.sector || "Unknown";
+      map[sector] = (map[sector] || 0) + 1;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [matches]);
+
+  const avgScore = useMemo(() => {
+    if (matches.length === 0) return 0;
+    return Math.round(matches.reduce((sum, m) => sum + Number(m.compatibility_score), 0) / matches.length);
+  }, [matches]);
+
+  const highMatches = matches.filter((m) => Number(m.compatibility_score) >= 70).length;
+  const medMatches = matches.filter((m) => Number(m.compatibility_score) >= 40 && Number(m.compatibility_score) < 70).length;
+  const lowMatches = matches.filter((m) => Number(m.compatibility_score) < 40).length;
+
+  const loadCriteria = (saved: any) => {
+    setCriteria({
+      target_sector: saved.target_sector || "",
+      target_size: saved.target_size || "",
+      target_location: saved.target_location || "",
+      min_revenue: saved.min_revenue?.toString() || "",
+      max_revenue: saved.max_revenue?.toString() || "",
+      min_ebitda: saved.min_ebitda?.toString() || "",
+      max_ebitda: saved.max_ebitda?.toString() || "",
+      risk_level: "",
+      notes: saved.notes || "",
+    });
+    toast({ title: "Critérios carregados", description: "Critérios anteriores foram restaurados." });
+  };
+
+  const formatCurrency = (val: number | null) => {
+    if (val == null) return "N/A";
+    if (val >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
+    if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
+    if (val >= 1e3) return `$${(val / 1e3).toFixed(0)}K`;
+    return `$${val}`;
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-display font-bold text-foreground">Buyer-Seller Matching</h1>
-        <p className="text-muted-foreground mt-1">AI-powered matching algorithm for compatible acquisitions</p>
+        <p className="text-muted-foreground mt-1">AI-powered acquisition matching engine with multi-dimensional analysis</p>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Search className="w-5 h-5 text-accent" />Acquisition Criteria</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="space-y-2"><Label>Target Sector</Label>
-              <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
-                <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
-                <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2"><Label>Location</Label><Input value={criteria.target_location} onChange={(e) => setCriteria({ ...criteria, target_location: e.target.value })} placeholder="Any" /></div>
-            <div className="space-y-2"><Label>Min Revenue ($)</Label><Input type="number" value={criteria.min_revenue} onChange={(e) => setCriteria({ ...criteria, min_revenue: e.target.value })} /></div>
-            <div className="space-y-2"><Label>Max Revenue ($)</Label><Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} /></div>
-          </div>
-          <div className="space-y-2 mb-4"><Label>Notes</Label><Textarea value={criteria.notes} onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })} placeholder="Additional requirements..." /></div>
-          <Button onClick={() => runMatchMutation.mutate()} disabled={runMatchMutation.isPending || companies.length === 0}>
-            <Zap className="w-4 h-4 mr-2" />{runMatchMutation.isPending ? "Analyzing..." : "Run AI Matching"}
-          </Button>
-          {companies.length === 0 && <p className="text-sm text-muted-foreground mt-2">Add companies first to run matching.</p>}
-        </CardContent>
-      </Card>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="criteria" className="gap-2"><Target className="w-4 h-4" />Critérios & Busca</TabsTrigger>
+          <TabsTrigger value="results" className="gap-2">
+            <Search className="w-4 h-4" />Resultados
+            {matches.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{matches.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-2"><BarChart3 className="w-4 h-4" />Analytics</TabsTrigger>
+        </TabsList>
 
-      {matches.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-xl font-display font-semibold">Match Results</h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            {matches.map((m: any) => (
-              <Card key={m.id} className={m.status === "dismissed" ? "opacity-50" : ""}>
-                <CardHeader className="flex flex-row items-start justify-between pb-2">
-                  <div>
-                    <CardTitle className="text-base font-display">{m.companies?.name || "Unknown"}</CardTitle>
-                    <p className="text-xs text-muted-foreground">{m.companies?.sector} · {m.companies?.location}</p>
+        {/* ========== TAB 1: CRITERIA ========== */}
+        <TabsContent value="criteria" className="space-y-6 mt-6">
+          {/* Saved criteria history */}
+          {criteriaHistory.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-display">Critérios Anteriores</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2">
+                {criteriaHistory.map((c: any) => (
+                  <Button key={c.id} variant="outline" size="sm" onClick={() => loadCriteria(c)} className="text-xs">
+                    {c.target_sector || "Any"} · {c.target_location || "Global"} · {new Date(c.created_at).toLocaleDateString()}
+                  </Button>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Left column: strategic criteria */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-display flex items-center gap-2"><Globe className="w-5 h-5 text-accent" />Strategic Criteria</CardTitle>
+                <CardDescription>Define the profile of your ideal acquisition target</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Target Sector</Label>
+                    <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
+                      <SelectTrigger><SelectValue placeholder="Any sector" /></SelectTrigger>
+                      <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
                   </div>
-                  <Badge className={Number(m.compatibility_score) >= 70 ? "bg-success/10 text-success" : Number(m.compatibility_score) >= 40 ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}>
-                    {m.compatibility_score}%
-                  </Badge>
+                  <div className="space-y-2">
+                    <Label>Region</Label>
+                    <Select value={criteria.target_location} onValueChange={(v) => setCriteria({ ...criteria, target_location: v })}>
+                      <SelectTrigger><SelectValue placeholder="Global" /></SelectTrigger>
+                      <SelectContent>{regions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Company Size</Label>
+                    <Select value={criteria.target_size} onValueChange={(v) => setCriteria({ ...criteria, target_size: v })}>
+                      <SelectTrigger><SelectValue placeholder="Any size" /></SelectTrigger>
+                      <SelectContent>{companySizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Risk Tolerance</Label>
+                    <Select value={criteria.risk_level} onValueChange={(v) => setCriteria({ ...criteria, risk_level: v })}>
+                      <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                      <SelectContent>{riskLevels.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Strategic Notes</Label>
+                  <Textarea
+                    value={criteria.notes}
+                    onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })}
+                    placeholder="E.g. Looking for companies with strong recurring revenue, ideally SaaS, with proven management team..."
+                    className="min-h-[100px]"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Right column: financial criteria */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-display flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" />Financial Parameters</CardTitle>
+                <CardDescription>Set revenue and profitability thresholds</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Min Revenue ($)</Label>
+                    <Input type="number" value={criteria.min_revenue} onChange={(e) => setCriteria({ ...criteria, min_revenue: e.target.value })} placeholder="0" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Revenue ($)</Label>
+                    <Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} placeholder="No limit" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Min EBITDA ($)</Label>
+                    <Input type="number" value={criteria.min_ebitda} onChange={(e) => setCriteria({ ...criteria, min_ebitda: e.target.value })} placeholder="0" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max EBITDA ($)</Label>
+                    <Input type="number" value={criteria.max_ebitda} onChange={(e) => setCriteria({ ...criteria, max_ebitda: e.target.value })} placeholder="No limit" />
+                  </div>
+                </div>
+
+                {/* Pre-filter preview */}
+                <div className="rounded-lg border border-border bg-muted/50 p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Filter className="w-4 h-4 text-muted-foreground" />
+                    Pre-filter Preview
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold text-foreground">{filteredCompanies.length}</span> of {companies.length} companies match your criteria
+                  </p>
+                  <Progress value={companies.length > 0 ? (filteredCompanies.length / companies.length) * 100 : 0} className="h-2" />
+                </div>
+
+                <Button
+                  onClick={() => runMatchMutation.mutate()}
+                  disabled={runMatchMutation.isPending || filteredCompanies.length === 0}
+                  className="w-full h-12 text-base font-semibold"
+                  size="lg"
+                >
+                  <Zap className="w-5 h-5 mr-2" />
+                  {runMatchMutation.isPending ? "Analyzing with AI..." : `Run AI Matching (${filteredCompanies.length} companies)`}
+                </Button>
+                {runMatchMutation.isPending && (
+                  <div className="space-y-2">
+                    <Progress value={undefined} className="h-1 animate-pulse" />
+                    <p className="text-xs text-center text-muted-foreground">AI is evaluating each company across 5 dimensions...</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ========== TAB 2: RESULTS ========== */}
+        <TabsContent value="results" className="space-y-6 mt-6">
+          {matchesLoading ? (
+            <div className="grid gap-4 md:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+            </div>
+          ) : matches.length === 0 ? (
+            <Card className="py-16 flex flex-col items-center justify-center text-center">
+              <Search className="w-12 h-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-display font-semibold">No matches yet</h3>
+              <p className="text-muted-foreground mt-1 max-w-sm">Define your criteria and run AI matching to discover compatible acquisition targets.</p>
+              <Button className="mt-4" onClick={() => setActiveTab("criteria")}>
+                <Target className="w-4 h-4 mr-2" />Go to Criteria
+              </Button>
+            </Card>
+          ) : (
+            <>
+              {/* Stats row */}
+              <div className="grid gap-4 md:grid-cols-4">
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total Matches</CardTitle></CardHeader>
+                  <CardContent><p className="text-3xl font-bold">{matches.length}</p></CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Avg. Score</CardTitle></CardHeader>
+                  <CardContent><p className="text-3xl font-bold">{avgScore}%</p></CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">High Compatibility</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold text-success">{highMatches}</p>
+                    <p className="text-xs text-muted-foreground">Score ≥ 70%</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Distribution</CardTitle></CardHeader>
+                  <CardContent className="flex items-center gap-2">
+                    <Badge className="bg-success/15 text-success border-0">{highMatches} High</Badge>
+                    <Badge className="bg-warning/15 text-warning border-0">{medMatches} Med</Badge>
+                    <Badge className="bg-destructive/15 text-destructive border-0">{lowMatches} Low</Badge>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm whitespace-nowrap">Status:</Label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="new">New</SelectItem>
+                      <SelectItem value="saved">Saved</SelectItem>
+                      <SelectItem value="dismissed">Dismissed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3 flex-1 max-w-xs">
+                  <Label className="text-sm whitespace-nowrap">Min Score: {minScoreFilter[0]}%</Label>
+                  <Slider value={minScoreFilter} onValueChange={setMinScoreFilter} max={100} step={5} className="flex-1" />
+                </div>
+                <p className="text-sm text-muted-foreground ml-auto">{displayMatches.length} results</p>
+              </div>
+
+              {/* Results table */}
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Company</TableHead>
+                      <TableHead>Sector</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead className="text-right">EBITDA</TableHead>
+                      <TableHead className="text-center">Score</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {displayMatches.map((m) => {
+                      const { analysis, dimensions, recommendation } = parseAnalysis(m.ai_analysis);
+                      const isExpanded = expandedMatch === m.id;
+                      const score = Number(m.compatibility_score);
+
+                      return (
+                        <>
+                          <TableRow
+                            key={m.id}
+                            className={`cursor-pointer hover:bg-muted/50 transition-colors ${m.status === "dismissed" ? "opacity-40" : ""}`}
+                            onClick={() => setExpandedMatch(isExpanded ? null : m.id)}
+                          >
+                            <TableCell className="font-medium">{m.companies?.name || "Unknown"}</TableCell>
+                            <TableCell><Badge variant="outline" className="text-xs">{m.companies?.sector || "—"}</Badge></TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{m.companies?.location || "—"}</TableCell>
+                            <TableCell className="text-right text-sm">{formatCurrency(m.companies?.revenue ?? null)}</TableCell>
+                            <TableCell className="text-right text-sm">{formatCurrency(m.companies?.ebitda ?? null)}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge className={score >= 70 ? "bg-success/15 text-success border-0" : score >= 40 ? "bg-warning/15 text-warning border-0" : "bg-destructive/15 text-destructive border-0"}>
+                                {score}%
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={m.status === "saved" ? "default" : "secondary"} className="text-xs capitalize">{m.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); updateStatus(m.id, "saved"); }} disabled={m.status === "saved"} className="h-8 w-8">
+                                  <Star className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); updateStatus(m.id, "dismissed"); }} className="h-8 w-8">
+                                  <X className="w-3.5 h-3.5" />
+                                </Button>
+                                {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {isExpanded && (
+                            <TableRow key={`${m.id}-detail`}>
+                              <TableCell colSpan={8} className="bg-muted/30 p-6">
+                                <div className="grid gap-6 lg:grid-cols-2">
+                                  {/* Left: Analysis text */}
+                                  <div className="space-y-4">
+                                    <div>
+                                      <h4 className="font-display font-semibold text-sm mb-2">AI Analysis</h4>
+                                      <p className="text-sm text-muted-foreground leading-relaxed">{analysis}</p>
+                                    </div>
+                                    {recommendation && (
+                                      <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+                                        <h4 className="font-display font-semibold text-sm mb-1 text-accent">Recommendation</h4>
+                                        <p className="text-sm text-muted-foreground">{recommendation}</p>
+                                      </div>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-3 text-sm">
+                                      <div className="rounded-lg border p-3">
+                                        <p className="text-muted-foreground">Revenue</p>
+                                        <p className="font-semibold">{formatCurrency(m.companies?.revenue ?? null)}</p>
+                                      </div>
+                                      <div className="rounded-lg border p-3">
+                                        <p className="text-muted-foreground">EBITDA</p>
+                                        <p className="font-semibold">{formatCurrency(m.companies?.ebitda ?? null)}</p>
+                                      </div>
+                                      <div className="rounded-lg border p-3">
+                                        <p className="text-muted-foreground">Size</p>
+                                        <p className="font-semibold">{m.companies?.size || "N/A"}</p>
+                                      </div>
+                                      <div className="rounded-lg border p-3">
+                                        <p className="text-muted-foreground">Risk Level</p>
+                                        <p className="font-semibold">{m.companies?.risk_level || "N/A"}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Right: Radar chart */}
+                                  {dimensions && (
+                                    <div>
+                                      <h4 className="font-display font-semibold text-sm mb-2 text-center">Compatibility Dimensions</h4>
+                                      <ResponsiveContainer width="100%" height={280}>
+                                        <RadarChart data={[
+                                          { dim: "Financial", value: dimensions.financial_fit },
+                                          { dim: "Sector", value: dimensions.sector_fit },
+                                          { dim: "Size", value: dimensions.size_fit },
+                                          { dim: "Location", value: dimensions.location_fit },
+                                          { dim: "Risk", value: dimensions.risk_fit },
+                                        ]}>
+                                          <PolarGrid stroke="hsl(var(--border))" />
+                                          <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
+                                          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
+                                          <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
+                                        </RadarChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+            </>
+          )}
+        </TabsContent>
+
+        {/* ========== TAB 3: ANALYTICS ========== */}
+        <TabsContent value="analytics" className="space-y-6 mt-6">
+          {matches.length === 0 ? (
+            <Card className="py-16 flex flex-col items-center justify-center text-center">
+              <BarChart3 className="w-12 h-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-display font-semibold">No data yet</h3>
+              <p className="text-muted-foreground mt-1">Run matching first to see analytics.</p>
+            </Card>
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Score distribution */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="font-display text-base">Score Distribution</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <Progress value={Number(m.compatibility_score)} className="h-2" />
-                  {m.ai_analysis && <p className="text-sm text-muted-foreground">{m.ai_analysis}</p>}
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => updateStatus(m.id, "saved")} disabled={m.status === "saved"}><Star className="w-3 h-3 mr-1" />Save</Button>
-                    <Button variant="outline" size="sm" onClick={() => updateStatus(m.id, "dismissed")}><X className="w-3 h-3 mr-1" />Dismiss</Button>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={scoreDistribution}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="range" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
+                      <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              {/* Sector breakdown */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="font-display text-base">Matches by Sector</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <PieChart>
+                      <Pie data={sectorDistribution} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                        {sectorDistribution.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              {/* Match history timeline */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="font-display text-base">Recent Matching Activity</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {criteriaHistory.map((c: any) => (
+                      <div key={c.id} className="flex items-center gap-4 rounded-lg border p-3">
+                        <div className="h-2 w-2 rounded-full bg-primary" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{c.target_sector || "All sectors"} · {c.target_location || "Global"}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Revenue: {c.min_revenue ? formatCurrency(c.min_revenue) : "Any"} – {c.max_revenue ? formatCurrency(c.max_revenue) : "Any"}
+                          </p>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</p>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -18,8 +18,8 @@ serve(async (req) => {
 
     switch (type) {
       case "match":
-        systemPrompt = "You are an M&A matching expert. Analyze buyer criteria against available companies and return a JSON array of matches with compatibility_score (0-100) and analysis text. Return ONLY valid JSON array.";
-        userPrompt = `Buyer criteria: ${JSON.stringify(data.criteria)}\n\nAvailable companies: ${JSON.stringify(data.companies)}\n\nReturn JSON array: [{"company_id": "...", "compatibility_score": 85, "analysis": "..."}]`;
+        systemPrompt = `You are an elite M&A matching analyst. Evaluate each candidate company against buyer acquisition criteria across 5 dimensions. Be rigorous, data-driven, and provide actionable insights. Consider global market dynamics, cross-border synergies, and sector-specific risks. Return ONLY a valid JSON array.`;
+        userPrompt = `Buyer acquisition criteria: ${JSON.stringify(data.criteria)}\n\nCandidate companies: ${JSON.stringify(data.companies)}\n\nFor EACH company, evaluate compatibility and return a JSON array. Each element must have:\n- "company_id": the company's id\n- "compatibility_score": 0-100 overall score\n- "analysis": 2-3 sentence strategic analysis explaining the fit\n- "dimensions": {"financial_fit": 0-100, "sector_fit": 0-100, "size_fit": 0-100, "location_fit": 0-100, "risk_fit": 0-100}\n- "recommendation": one actionable sentence on next steps\n\nReturn JSON array: [{"company_id": "...", "compatibility_score": 82, "analysis": "...", "dimensions": {"financial_fit": 90, "sector_fit": 75, "size_fit": 80, "location_fit": 70, "risk_fit": 85}, "recommendation": "..."}]`;
         break;
 
       case "due-diligence":
