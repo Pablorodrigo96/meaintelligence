@@ -1,81 +1,44 @@
 
 
-# PMI - Dashboard de Acompanhamento + Responsavel e Prazo
+# Correcao: Status e Prazos nao editaveis no PMI
 
-## Resumo
-Adicionar campos de **Responsavel** e **Data Prazo** em cada atividade do PMI, e criar um **dashboard visual** com graficos e indicadores de acompanhamento no topo da pagina.
+## Problema Identificado
 
----
+Existem **duas causas raiz**:
 
-## 1. Alteracoes no Banco de Dados
+### Causa 1 - Textos incompativeis entre banco e codigo
+Quando o playbook foi inicializado no banco de dados, as atividades continham o texto "Desktop". Depois, substituimos todas as ocorrencias por "Compradora" no codigo. O sistema faz o match entre banco e codigo comparando o texto exato da atividade (`d.activity === item.activity`), entao **36 atividades** com "Desktop" no banco nao sao encontradas, ficam sem `dbId`, e qualquer tentativa de alterar status ou prazo e silenciosamente ignorada.
 
-Adicionar duas novas colunas na tabela `pmi_activities`:
-
-- `responsible` (text, nullable) -- nome do responsavel pela atividade
-- `due_date` (date, nullable) -- data limite para conclusao
-
-Isso permite que o usuario atribua um responsavel e uma data especifica para cada atividade.
+### Causa 2 - Closure desatualizada nos callbacks
+As funcoes `updateStatus`, `updateDueDate` e `updateResponsible` usam `useCallback` com dependencia em `[activities]`. Ao alterar rapidamente multiplos itens, a referencia ao array `activities` pode estar desatualizada, fazendo o `find()` falhar.
 
 ---
 
-## 2. Dashboard de Acompanhamento
+## Solucao
 
-Serao adicionados cards e graficos visuais acima da lista de atividades, usando a biblioteca Recharts (ja instalada). O dashboard tera:
+### 1. Migracao no banco de dados
+Atualizar os textos no banco para substituir "Desktop" por "Compradora" nas atividades ja salvas:
 
-**Cards de resumo (4 cards):**
-- Total de atividades / Concluidas
-- % de progresso geral
-- Atividades bloqueadas (alerta)
-- Atividades vencidas (prazo ultrapassado)
-
-**Graficos:**
-- **Grafico de pizza/donut**: distribuicao por status (Pendente, Em Andamento, Concluido, Bloqueado)
-- **Grafico de barras**: progresso por Grupo (Planejamento, Backoffice, Frontoffice, Rede e Operacoes)
-- **Grafico de barras empilhadas**: distribuicao por prazo (D15, D30, D45, D60, D90, D180+) cruzado com status
-
----
-
-## 3. Campos na Tabela de Atividades
-
-Adicionar duas novas colunas na tabela de cada atividade:
-
-- **Responsavel**: campo de texto editavel inline (input de texto)
-- **Data Prazo**: campo de data editavel (date picker)
-
-As colunas da tabela ficarao: Area/Tema | Milestone | Atividade | Responsavel | Data Prazo | Prazo (D15 etc.) | Status
-
----
-
-## 4. Navegacao por Abas
-
-A pagina PMI tera duas abas (Tabs):
-- **Dashboard**: visao geral com graficos e indicadores
-- **Playbook**: a lista de atividades atual com os novos campos
-
----
-
-## Detalhes Tecnicos
-
-### Migracao SQL
 ```sql
-ALTER TABLE public.pmi_activities
-ADD COLUMN responsible text,
-ADD COLUMN due_date date;
+UPDATE public.pmi_activities
+SET activity = REPLACE(activity, 'Desktop', 'Compradora'),
+    milestone = REPLACE(milestone, 'Desktop', 'Compradora');
 ```
 
-### Arquivos modificados
-- `src/pages/PMI.tsx` -- adicionar tabs, dashboard, novos campos na tabela
-- `src/data/pmi-playbook.ts` -- nenhuma alteracao necessaria (dados estaticos nao mudam)
+### 2. Melhorar a logica de matching
+Em vez de depender do texto exato da atividade, usar um Map indexado por `dbId` para acesso direto. Tambem adicionar fallback no matching para lidar com pequenas variacoes.
 
-### Componentes novos
-- Secao de dashboard inline no proprio PMI.tsx com cards + graficos Recharts
+### 3. Corrigir closures com ref
+Usar `useRef` para manter uma referencia sempre atualizada do array `activities`, evitando problemas de closure nos callbacks. Os callbacks passarao a ler de `activitiesRef.current` em vez do valor capturado no closure.
 
-### Estado local
-- `ActivityState` ganha campos `responsible?: string` e `dueDate?: string`
-- Funcoes `updateResponsible` e `updateDueDate` para salvar no banco via Supabase
+---
 
-### Graficos (Recharts)
-- `PieChart` para distribuicao por status
-- `BarChart` para progresso por grupo
-- `BarChart` empilhado para distribuicao prazo x status
+## Arquivos modificados
+
+- **`src/pages/PMI.tsx`**:
+  - Adicionar `activitiesRef` (useRef) sincronizado com `activities`
+  - Alterar `updateStatus`, `updateResponsible`, `updateDueDate` para usar `activitiesRef.current`
+  - Remover `[activities]` como dependencia dos callbacks (usar `[]` ja que leem da ref)
+
+- **Migracao SQL**: Atualizar textos existentes no banco
 
