@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format, parseISO } from "date-fns";
 import { pmiPlaybook, PMI_GROUPS, DEADLINE_ORDER, STATUS_OPTIONS, getDeadlineColor, getStatusColor, getStatusLabel } from "@/data/pmi-playbook";
 import { Progress } from "@/components/ui/progress";
@@ -37,6 +37,11 @@ export default function PMI() {
   const [expandedDisciplines, setExpandedDisciplines] = useState<Set<string>>(new Set());
   const [filterDeadline, setFilterDeadline] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const activitiesRef = useRef<ActivityState[]>([]);
+
+  useEffect(() => {
+    activitiesRef.current = activities;
+  }, [activities]);
 
   useEffect(() => {
     if (!user) return;
@@ -106,8 +111,11 @@ export default function PMI() {
   };
 
   const updateStatus = useCallback(async (activityId: number, newStatus: ActivityStatus) => {
-    const activity = activities.find((a) => a.id === activityId);
-    if (!activity?.dbId) return;
+    const activity = activitiesRef.current.find((a) => a.id === activityId);
+    if (!activity?.dbId) {
+      console.warn("updateStatus: no dbId for activity", activityId);
+      return;
+    }
 
     setActivities((prev) =>
       prev.map((a) => (a.id === activityId ? { ...a, status: newStatus } : a))
@@ -124,11 +132,14 @@ export default function PMI() {
         prev.map((a) => (a.id === activityId ? { ...a, status: activity.status } : a))
       );
     }
-  }, [activities]);
+  }, []);
 
   const updateResponsible = useCallback(async (activityId: number, value: string) => {
-    const activity = activities.find((a) => a.id === activityId);
-    if (!activity?.dbId) return;
+    const activity = activitiesRef.current.find((a) => a.id === activityId);
+    if (!activity?.dbId) {
+      console.warn("updateResponsible: no dbId for activity", activityId);
+      return;
+    }
 
     setActivities((prev) =>
       prev.map((a) => (a.id === activityId ? { ...a, responsible: value } : a))
@@ -140,11 +151,14 @@ export default function PMI() {
       .eq("id", activity.dbId);
 
     if (error) console.error("Error updating responsible:", error);
-  }, [activities]);
+  }, []);
 
   const updateDueDate = useCallback(async (activityId: number, date: Date | undefined) => {
-    const activity = activities.find((a) => a.id === activityId);
-    if (!activity?.dbId) return;
+    const activity = activitiesRef.current.find((a) => a.id === activityId);
+    if (!activity?.dbId) {
+      console.warn("updateDueDate: no dbId for activity", activityId);
+      return;
+    }
 
     const dateStr = date ? format(date, "yyyy-MM-dd") : null;
 
@@ -158,7 +172,7 @@ export default function PMI() {
       .eq("id", activity.dbId);
 
     if (error) console.error("Error updating due_date:", error);
-  }, [activities]);
+  }, []);
 
   const getActivityStatus = (id: number): ActivityStatus => {
     return activities.find((a) => a.id === id)?.status || "pending";
