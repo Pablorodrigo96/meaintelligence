@@ -31,46 +31,47 @@ export default function Strategy() {
     mutationFn: async () => {
       const buyer = companies.find((c) => c.id === buyerCompany);
       const target = companies.find((c) => c.id === targetCompany);
-      if (!buyer || !target) throw new Error("Select both companies");
+      if (!buyer || !target) throw new Error("Selecione ambas as empresas");
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "strategy", data: { transaction: { buyer_name: buyer.name, target_name: target.name }, buyer, target } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
       setResult(data.result);
     },
-    onSuccess: () => toast({ title: "Strategy analysis complete" }),
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onSuccess: () => toast({ title: "Análise estratégica concluída" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const priorityColor: Record<string, string> = { high: "bg-destructive/10 text-destructive", medium: "bg-warning/10 text-warning", low: "bg-success/10 text-success" };
+  const priorityLabels: Record<string, string> = { high: "Alta", medium: "Média", low: "Baixa" };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Transaction Strategy</h1>
-        <p className="text-muted-foreground mt-1">AI predictions and strategic recommendations for M&A success</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Estratégia de Transação</h1>
+        <p className="text-muted-foreground mt-1">Previsões e recomendações estratégicas com IA para o sucesso em M&A</p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><TrendingUp className="w-5 h-5 text-success" />Strategy Analysis</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-display flex items-center gap-2"><TrendingUp className="w-5 h-5 text-success" />Análise Estratégica</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Buyer Company</Label>
+              <Label>Empresa Compradora</Label>
               <Select value={buyerCompany} onValueChange={setBuyerCompany}>
-                <SelectTrigger><SelectValue placeholder="Select buyer" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Selecionar compradora" /></SelectTrigger>
                 <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Target Company</Label>
+              <Label>Empresa Alvo</Label>
               <Select value={targetCompany} onValueChange={setTargetCompany}>
-                <SelectTrigger><SelectValue placeholder="Select target" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Selecionar alvo" /></SelectTrigger>
                 <SelectContent>{companies.filter((c) => c.id !== buyerCompany).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
           </div>
           <Button onClick={() => analyzeMutation.mutate()} disabled={!buyerCompany || !targetCompany || analyzeMutation.isPending}>
-            {analyzeMutation.isPending ? "Analyzing..." : "Analyze Strategy"}
+            {analyzeMutation.isPending ? "Analisando..." : "Analisar Estratégia"}
           </Button>
         </CardContent>
       </Card>
@@ -79,7 +80,7 @@ export default function Strategy() {
         <div className="space-y-4">
           {result.success_probability != null && (
             <Card>
-              <CardHeader><CardTitle className="text-base font-display flex items-center gap-2"><Target className="w-4 h-4" />Success Probability</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base font-display flex items-center gap-2"><Target className="w-4 h-4" />Probabilidade de Sucesso</CardTitle></CardHeader>
               <CardContent>
                 <div className="text-4xl font-bold text-primary mb-2">{result.success_probability}%</div>
                 <Progress value={result.success_probability} className="h-3" />
@@ -89,14 +90,14 @@ export default function Strategy() {
 
           {Array.isArray(result.recommendations) && result.recommendations.length > 0 && (
             <div>
-              <h2 className="text-xl font-display font-semibold mb-3">Strategic Recommendations</h2>
+              <h2 className="text-xl font-display font-semibold mb-3">Recomendações Estratégicas</h2>
               <div className="grid gap-3 md:grid-cols-2">
                 {result.recommendations.map((rec: any, i: number) => (
                   <Card key={i}>
                     <CardContent className="pt-4">
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-medium">{rec.title}</h3>
-                        <Badge className={priorityColor[rec.priority] || priorityColor.medium}>{rec.priority}</Badge>
+                        <Badge className={priorityColor[rec.priority] || priorityColor.medium}>{priorityLabels[rec.priority] || rec.priority}</Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">{rec.description}</p>
                     </CardContent>
@@ -108,7 +109,7 @@ export default function Strategy() {
 
           {Array.isArray(result.integration_timeline) && result.integration_timeline.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-base font-display flex items-center gap-2"><Clock className="w-4 h-4" />Integration Timeline</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base font-display flex items-center gap-2"><Clock className="w-4 h-4" />Cronograma de Integração</CardTitle></CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   {result.integration_timeline.map((phase: any, i: number) => (

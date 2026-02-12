@@ -37,7 +37,7 @@ export default function Risk() {
   const analyzeMutation = useMutation({
     mutationFn: async () => {
       const company = companies.find((c) => c.id === selectedCompany);
-      if (!company) throw new Error("Select a company");
+      if (!company) throw new Error("Selecione uma empresa");
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "risk", data: { company } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
@@ -50,8 +50,8 @@ export default function Risk() {
       });
       queryClient.invalidateQueries({ queryKey: ["risk-assessments"] });
     },
-    onSuccess: () => toast({ title: "Risk analysis complete" }),
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onSuccess: () => toast({ title: "Análise de risco concluída" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const scatterData = assessments.map((a: any) => ({
@@ -62,43 +62,43 @@ export default function Risk() {
 
   const scoreLabel = (score: number | null) => {
     if (score == null) return "—";
-    if (score >= 70) return "High Risk";
-    if (score >= 40) return "Medium Risk";
-    return "Low Risk";
+    if (score >= 70) return "Risco Alto";
+    if (score >= 40) return "Risco Médio";
+    return "Risco Baixo";
   };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Risk Analysis</h1>
-        <p className="text-muted-foreground mt-1">Consolidated risk dashboard across financial, legal, and operational dimensions</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Análise de Risco</h1>
+        <p className="text-muted-foreground mt-1">Painel consolidado de risco nas dimensões financeira, legal e operacional</p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-destructive" />Run Risk Analysis</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-display flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-destructive" />Executar Análise de Risco</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Select Company</Label>
+            <Label>Selecionar Empresa</Label>
             <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-              <SelectTrigger><SelectValue placeholder="Choose a company" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Escolha uma empresa" /></SelectTrigger>
               <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <Button onClick={() => analyzeMutation.mutate()} disabled={!selectedCompany || analyzeMutation.isPending}>
-            {analyzeMutation.isPending ? "Analyzing..." : "Analyze Risk"}
+            {analyzeMutation.isPending ? "Analisando..." : "Analisar Risco"}
           </Button>
         </CardContent>
       </Card>
 
       {scatterData.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="text-base font-display">Risk Matrix</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base font-display">Matriz de Risco</CardTitle></CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <ScatterChart>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="x" name="Financial Risk" type="number" domain={[0, 100]} label={{ value: "Financial Risk", position: "bottom" }} />
-                <YAxis dataKey="y" name="Operational Risk" type="number" domain={[0, 100]} label={{ value: "Operational Risk", angle: -90, position: "left" }} />
+                <XAxis dataKey="x" name="Risco Financeiro" type="number" domain={[0, 100]} label={{ value: "Risco Financeiro", position: "bottom" }} />
+                <YAxis dataKey="y" name="Risco Operacional" type="number" domain={[0, 100]} label={{ value: "Risco Operacional", angle: -90, position: "left" }} />
                 <Tooltip formatter={(v: number) => `${v}/100`} labelFormatter={(_, payload) => payload?.[0]?.payload?.name || ""} />
                 <Scatter data={scatterData}>
                   {scatterData.map((d, i) => <Cell key={i} fill={getColor(d.overall)} />)}
@@ -111,7 +111,7 @@ export default function Risk() {
 
       {assessments.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-xl font-display font-semibold">Assessment Results</h2>
+          <h2 className="text-xl font-display font-semibold">Resultados das Avaliações</h2>
           {assessments.map((a: any) => (
             <Card key={a.id}>
               <CardHeader className="pb-2">
@@ -124,7 +124,7 @@ export default function Risk() {
                 <div className="grid grid-cols-4 gap-4 text-sm">
                   <div className="text-center p-2 bg-muted rounded-lg">
                     <div className="text-lg font-bold">{a.financial_score ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">Financial</div>
+                    <div className="text-xs text-muted-foreground">Financeiro</div>
                   </div>
                   <div className="text-center p-2 bg-muted rounded-lg">
                     <div className="text-lg font-bold">{a.legal_score ?? "—"}</div>
@@ -132,16 +132,16 @@ export default function Risk() {
                   </div>
                   <div className="text-center p-2 bg-muted rounded-lg">
                     <div className="text-lg font-bold">{a.operational_score ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">Operational</div>
+                    <div className="text-xs text-muted-foreground">Operacional</div>
                   </div>
                   <div className="text-center p-2 bg-muted rounded-lg">
                     <div className="text-lg font-bold">{a.overall_score ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">Overall</div>
+                    <div className="text-xs text-muted-foreground">Geral</div>
                   </div>
                 </div>
                 {a.ai_recommendations && (
                   <div>
-                    <p className="text-sm font-medium mb-1 flex items-center gap-1"><TrendingDown className="w-3 h-3" />Recommendations</p>
+                    <p className="text-sm font-medium mb-1 flex items-center gap-1"><TrendingDown className="w-3 h-3" />Recomendações</p>
                     <p className="text-sm text-muted-foreground whitespace-pre-wrap">{a.ai_recommendations}</p>
                   </div>
                 )}

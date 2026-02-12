@@ -12,9 +12,9 @@ import { FileText, Download, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const contractTypes = [
-  { value: "nda", label: "Non-Disclosure Agreement (NDA)" },
-  { value: "purchase_agreement", label: "Purchase Agreement" },
-  { value: "shareholder_agreement", label: "Shareholder Agreement" },
+  { value: "nda", label: "Acordo de Não-Divulgação (NDA)" },
+  { value: "purchase_agreement", label: "Acordo de Compra" },
+  { value: "shareholder_agreement", label: "Acordo de Acionistas" },
 ];
 
 export default function Contracts() {
@@ -36,7 +36,7 @@ export default function Contracts() {
 
   const generateMutation = useMutation({
     mutationFn: async () => {
-      if (!contractType) throw new Error("Select a contract type");
+      if (!contractType) throw new Error("Selecione um tipo de contrato");
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "contract", data: { contractType: contractTypes.find((t) => t.value === contractType)?.label, parameters: params } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
@@ -45,44 +45,44 @@ export default function Contracts() {
       await supabase.from("contracts").insert({ user_id: user!.id, contract_type: contractType, content, parameters: params as any });
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
     },
-    onSuccess: () => toast({ title: "Contract generated" }),
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onSuccess: () => toast({ title: "Contrato gerado" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const downloadContract = (content: string, type: string) => {
     const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `${type}_contract.txt`; a.click();
+    a.href = url; a.download = `${type}_contrato.txt`; a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Contract Generation</h1>
-        <p className="text-muted-foreground mt-1">AI-generated legal documents and contract templates</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Geração de Contratos</h1>
+        <p className="text-muted-foreground mt-1">Documentos legais gerados por IA e modelos de contrato</p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Plus className="w-5 h-5 text-accent" />Generate Contract</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Plus className="w-5 h-5 text-accent" />Gerar Contrato</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Contract Type</Label>
+            <Label>Tipo de Contrato</Label>
             <Select value={contractType} onValueChange={setContractType}>
-              <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Selecionar tipo" /></SelectTrigger>
               <SelectContent>{contractTypes.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2"><Label>Party A</Label><Input value={params.party_a} onChange={(e) => setParams({ ...params, party_a: e.target.value })} placeholder="Company A name" /></div>
-            <div className="space-y-2"><Label>Party B</Label><Input value={params.party_b} onChange={(e) => setParams({ ...params, party_b: e.target.value })} placeholder="Company B name" /></div>
-            <div className="space-y-2"><Label>Deal Value ($)</Label><Input type="number" value={params.deal_value} onChange={(e) => setParams({ ...params, deal_value: e.target.value })} /></div>
-            <div className="space-y-2"><Label>Effective Date</Label><Input type="date" value={params.effective_date} onChange={(e) => setParams({ ...params, effective_date: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Parte A</Label><Input value={params.party_a} onChange={(e) => setParams({ ...params, party_a: e.target.value })} placeholder="Nome da empresa A" /></div>
+            <div className="space-y-2"><Label>Parte B</Label><Input value={params.party_b} onChange={(e) => setParams({ ...params, party_b: e.target.value })} placeholder="Nome da empresa B" /></div>
+            <div className="space-y-2"><Label>Valor do Acordo ($)</Label><Input type="number" value={params.deal_value} onChange={(e) => setParams({ ...params, deal_value: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Data de Início</Label><Input type="date" value={params.effective_date} onChange={(e) => setParams({ ...params, effective_date: e.target.value })} /></div>
           </div>
-          <div className="space-y-2"><Label>Additional Terms</Label><Textarea value={params.terms} onChange={(e) => setParams({ ...params, terms: e.target.value })} placeholder="Any specific terms or clauses..." /></div>
+          <div className="space-y-2"><Label>Termos Adicionais</Label><Textarea value={params.terms} onChange={(e) => setParams({ ...params, terms: e.target.value })} placeholder="Termos ou cláusulas específicas..." /></div>
           <Button onClick={() => generateMutation.mutate()} disabled={!contractType || generateMutation.isPending}>
-            <FileText className="w-4 h-4 mr-2" />{generateMutation.isPending ? "Generating..." : "Generate Contract"}
+            <FileText className="w-4 h-4 mr-2" />{generateMutation.isPending ? "Gerando..." : "Gerar Contrato"}
           </Button>
         </CardContent>
       </Card>
@@ -90,8 +90,8 @@ export default function Contracts() {
       {preview && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base font-display">Contract Preview</CardTitle>
-            <Button variant="outline" size="sm" onClick={() => downloadContract(preview, contractType)}><Download className="w-3 h-3 mr-1" />Download</Button>
+            <CardTitle className="text-base font-display">Pré-visualização do Contrato</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => downloadContract(preview, contractType)}><Download className="w-3 h-3 mr-1" />Baixar</Button>
           </CardHeader>
           <CardContent>
             <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg max-h-96 overflow-y-auto font-mono">{preview}</pre>
@@ -101,14 +101,14 @@ export default function Contracts() {
 
       {contracts.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-xl font-display font-semibold">Past Contracts</h2>
+          <h2 className="text-xl font-display font-semibold">Contratos Anteriores</h2>
           {contracts.map((c: any) => (
             <Card key={c.id}>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-base font-display flex items-center gap-2">
                   <FileText className="w-4 h-4" />{contractTypes.find((t) => t.value === c.contract_type)?.label || c.contract_type}
                 </CardTitle>
-                <Button variant="outline" size="sm" onClick={() => downloadContract(c.content, c.contract_type)}><Download className="w-3 h-3 mr-1" />Download</Button>
+                <Button variant="outline" size="sm" onClick={() => downloadContract(c.content, c.contract_type)}><Download className="w-3 h-3 mr-1" />Baixar</Button>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</p>

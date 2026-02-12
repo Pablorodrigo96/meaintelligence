@@ -12,24 +12,23 @@ const metrics = [
   { title: "Valuations", icon: Calculator, color: "text-primary", table: "valuations" as const, filter: null },
   { title: "Contratos", icon: FileText, color: "text-accent", table: "contracts" as const, filter: null },
   { title: "Due Diligence", icon: Shield, color: "text-warning", table: "due_diligence_reports" as const, filter: null },
-  { title: "Risk Assessments", icon: AlertTriangle, color: "text-destructive", table: "risk_assessments" as const, filter: null },
+  { title: "Análises de Risco", icon: AlertTriangle, color: "text-destructive", table: "risk_assessments" as const, filter: null },
 ];
 
 const modules = [
-  { title: "Companies", description: "Manage company profiles and financials", icon: Building2, path: "/companies", color: "text-primary" },
-  { title: "Matching", description: "Find compatible buyers and sellers", icon: Search, path: "/matching", color: "text-accent" },
-  { title: "Due Diligence", description: "Automated document review", icon: Shield, path: "/due-diligence", color: "text-warning" },
-  { title: "Valuation", description: "DCF and EBITDA analysis", icon: Calculator, path: "/valuation", color: "text-primary" },
-  { title: "Strategy", description: "Transaction predictions", icon: TrendingUp, path: "/strategy", color: "text-success" },
-  { title: "Contracts", description: "Generate legal documents", icon: FileText, path: "/contracts", color: "text-accent" },
-  { title: "Risk Analysis", description: "Comprehensive risk scoring", icon: AlertTriangle, path: "/risk", color: "text-destructive" },
+  { title: "Empresas", description: "Gerencie perfis de empresas e dados financeiros", icon: Building2, path: "/companies", color: "text-primary" },
+  { title: "Matching", description: "Encontre compradores e vendedores compatíveis", icon: Search, path: "/matching", color: "text-accent" },
+  { title: "Due Diligence", description: "Análise automática de documentos", icon: Shield, path: "/due-diligence", color: "text-warning" },
+  { title: "Valuation", description: "Análise de DCF e EBITDA", icon: Calculator, path: "/valuation", color: "text-primary" },
+  { title: "Estratégia", description: "Previsões de transações", icon: TrendingUp, path: "/strategy", color: "text-success" },
+  { title: "Contratos", description: "Gere documentos legais", icon: FileText, path: "/contracts", color: "text-accent" },
+  { title: "Análise de Risco", description: "Pontuação de risco abrangente", icon: AlertTriangle, path: "/risk", color: "text-destructive" },
 ];
 
 function useMetricCount(table: string, filter: { column: string; not: string } | null) {
   return useQuery({
     queryKey: ["metric", table],
     queryFn: async () => {
-      // Use type assertion to handle dynamic table name
       const query = supabase.from(table as "companies").select("*", { count: "exact", head: true });
       if (filter) {
         const { count, error } = await query.neq(filter.column as "id", filter.not);
@@ -68,13 +67,15 @@ function MetricCard({ title, icon: Icon, color, table, filter }: typeof metrics[
 export default function Dashboard() {
   const { user, roles } = useAuth();
 
+  const roleNames: Record<string, string> = { buyer: "Comprador", seller: "Vendedor", advisor: "Consultor", admin: "Admin" };
+
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Dashboard</h1>
+        <h1 className="text-3xl font-display font-bold text-foreground">Painel</h1>
         <p className="text-muted-foreground mt-1">
-          Welcome back{user?.user_metadata?.full_name ? `, ${user.user_metadata.full_name}` : ""}.
-          {roles.length > 0 && <span className="capitalize"> Role: {roles.join(", ")}</span>}
+          Bem-vindo(a) de volta{user?.user_metadata?.full_name ? `, ${user.user_metadata.full_name}` : ""}.
+          {roles.length > 0 && <span> Cargo: {roles.map(r => roleNames[r] || r).join(", ")}</span>}
         </p>
       </div>
 

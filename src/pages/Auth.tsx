@@ -54,13 +54,13 @@ export default function Auth() {
         }
 
         toast({
-          title: "Account created!",
-          description: "Please check your email to verify your account before signing in.",
+          title: "Conta criada!",
+          description: "Verifique seu email para confirmar sua conta antes de entrar.",
         });
       }
     } catch (error: any) {
       toast({
-        title: "Error",
+        title: "Erro",
         description: error.message,
         variant: "destructive",
       });
@@ -77,21 +77,21 @@ export default function Auth() {
             M&A
           </div>
           <h1 className="text-2xl font-display font-bold text-foreground">M&A Intelligence</h1>
-          <p className="text-muted-foreground text-sm">AI-powered mergers & acquisitions platform</p>
+          <p className="text-muted-foreground text-sm">Plataforma de fusões e aquisições com IA</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="font-display">{isLogin ? "Sign In" : "Create Account"}</CardTitle>
+            <CardTitle className="font-display">{isLogin ? "Entrar" : "Criar Conta"}</CardTitle>
             <CardDescription>
-              {isLogin ? "Enter your credentials to access the platform" : "Set up your account to get started"}
+              {isLogin ? "Digite suas credenciais para acessar a plataforma" : "Configure sua conta para começar"}
             </CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
               {!isLogin && (
                 <div className="space-y-2">
-                  <Label htmlFor="fullName">Full Name</Label>
+                  <Label htmlFor="fullName">Nome Completo</Label>
                   <Input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
                 </div>
               )}
@@ -100,20 +100,20 @@ export default function Auth() {
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Senha</Label>
                 <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
               </div>
               {!isLogin && (
                 <div className="space-y-2">
-                  <Label htmlFor="role">I am a</Label>
+                  <Label htmlFor="role">Sou um(a)</Label>
                   <Select value={role} onValueChange={(v) => setRole(v as AppRole)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="buyer">Buyer</SelectItem>
-                      <SelectItem value="seller">Seller</SelectItem>
-                      <SelectItem value="advisor">Advisor</SelectItem>
+                      <SelectItem value="buyer">Comprador</SelectItem>
+                      <SelectItem value="seller">Vendedor</SelectItem>
+                      <SelectItem value="advisor">Consultor</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -121,14 +121,14 @@ export default function Auth() {
             </CardContent>
             <CardFooter className="flex-col gap-4">
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Please wait..." : isLogin ? "Sign In" : "Create Account"}
+                {loading ? "Aguarde..." : isLogin ? "Entrar" : "Criar Conta"}
               </Button>
               <button
                 type="button"
                 onClick={() => setIsLogin(!isLogin)}
                 className="text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
-                {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+                {isLogin ? "Não tem conta? Cadastre-se" : "Já tem conta? Faça login"}
               </button>
             </CardFooter>
           </form>

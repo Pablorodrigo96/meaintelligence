@@ -20,19 +20,19 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
-  { label: "Dashboard", icon: LayoutDashboard, path: "/dashboard" },
-  { label: "Companies", icon: Building2, path: "/companies" },
+  { label: "Painel", icon: LayoutDashboard, path: "/dashboard" },
+  { label: "Empresas", icon: Building2, path: "/companies" },
   { label: "Matching", icon: Search, path: "/matching" },
   { label: "Due Diligence", icon: Shield, path: "/due-diligence" },
   { label: "Valuation", icon: Calculator, path: "/valuation" },
-  { label: "Strategy", icon: TrendingUp, path: "/strategy" },
-  { label: "Contracts", icon: FileText, path: "/contracts" },
-  { label: "Risk Analysis", icon: AlertTriangle, path: "/risk" },
+  { label: "Estratégia", icon: TrendingUp, path: "/strategy" },
+  { label: "Contratos", icon: FileText, path: "/contracts" },
+  { label: "Análise de Risco", icon: AlertTriangle, path: "/risk" },
 ];
 
 const adminItems = [
-  { label: "User Management", icon: Users, path: "/admin/users" },
-  { label: "Settings", icon: Settings, path: "/admin/settings" },
+  { label: "Gestão de Usuários", icon: Users, path: "/admin/users" },
+  { label: "Configurações", icon: Settings, path: "/admin/settings" },
 ];
 
 export function AppSidebar() {
@@ -124,7 +124,7 @@ export function AppSidebar() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
         >
           <LogOut className="w-5 h-5 shrink-0" />
-          {!collapsed && <span>Sign Out</span>}
+          {!collapsed && <span>Sair</span>}
         </button>
         <Button
           variant="ghost"
