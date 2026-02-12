@@ -1,105 +1,197 @@
 
 
-# Redesign Completo do Modulo de Matching
+# Plano: Traduzir Toda a Plataforma para Português
 
-O matching atual e basicamente um formulario simples + cards rasos. Vamos transforma-lo no modulo central da plataforma com uma experiencia rica e profissional.
+## Escopo
 
-## Problemas Atuais
+A plataforma M&A Intelligence está atualmente em **inglês**. Vamos traduzir toda a interface para **português brasileiro**. Identificamos textos em 7 arquivos principais:
 
-1. **UI extremamente basica** -- formulario plano com 4 campos e cards sem profundidade
-2. **Sem pre-filtragem** -- envia TODAS as empresas para a IA, sem inteligencia local
-3. **Sem deduplicacao** -- rodar matching novamente cria duplicatas
-4. **Sem visualizacoes** -- nenhum grafico ou dado visual
-5. **Sem detalhes expandidos** -- nao ha como explorar um match em profundidade
-6. **Empresas limitadas ao proprio usuario** -- RLS restringe a `user_id`, entao so faz match com suas proprias empresas
-7. **Sem abas ou organizacao** -- tudo jogado numa unica rolagem
+### Arquivos a traduzir:
 
-## Nova Arquitetura da Pagina
+1. **src/pages/Auth.tsx** - Formulário de login/signup
+2. **src/pages/Dashboard.tsx** - Dashboard com métricas
+3. **src/pages/Companies.tsx** - Gestão de empresas
+4. **src/components/layout/AppSidebar.tsx** - Navegação lateral
+5. **src/pages/Matching.tsx** - Módulo de matching (parcialmente, já tem alguns textos em PT)
+6. **src/pages/DueDiligence.tsx** - Due diligence
+7. **src/pages/Valuation.tsx** - Valuation
+8. **src/pages/Contracts.tsx** - Geração de contratos
+9. **src/pages/Risk.tsx** - Análise de risco
+10. **src/pages/AdminUsers.tsx** - Gestão de usuários (admin)
 
-A pagina sera reorganizada com **3 abas (Tabs)**:
+## Tradução de Strings-Chave
 
-### Aba 1: "Criterios & Busca"
-- Formulario expandido com mais campos:
-  - Setor alvo (multi-select)
-  - Regiao/Pais (com opcoes globais: Americas, Europe, Asia-Pacific, Global)
-  - Faixa de receita (slider duplo com min/max)
-  - Faixa de EBITDA (slider duplo)
-  - Tamanho da empresa (Small/Medium/Large/Enterprise)
-  - Nivel de risco aceitavel (Low/Medium/High)
-  - Notas estrategicas (textarea)
-- Historico de criterios salvos anteriormente (carrega do banco)
-- Botao "Run AI Matching" com animacao de loading elaborada
+### Auth.tsx
+- "Sign In" → "Entrar"
+- "Create Account" → "Criar Conta"
+- "Enter your credentials to access the platform" → "Digite suas credenciais para acessar a plataforma"
+- "Set up your account to get started" → "Configure sua conta para começar"
+- "Full Name" → "Nome Completo"
+- "Password" → "Senha"
+- "I am a" → "Sou um(a)"
+- "Buyer" → "Comprador"
+- "Seller" → "Vendedor"
+- "Advisor" → "Consultor"
+- "Don't have an account? Sign up" → "Não tem conta? Cadastre-se"
+- "Already have an account? Sign in" → "Já tem conta? Faça login"
+- "Account created!" → "Conta criada!"
+- "Please check your email to verify your account before signing in." → "Verifique seu email para confirmar sua conta antes de entrar."
+- "Please wait..." → "Aguarde..."
+- "Error" → "Erro"
 
-### Aba 2: "Resultados" (aba principal apos rodar)
-- **Painel de estatisticas no topo:**
-  - Total de matches encontrados
-  - Score medio de compatibilidade
-  - Distribuicao por faixa (High/Medium/Low) em mini-chart
-- **Filtros rapidos:** por status (All/New/Saved/Dismissed), por score minimo (slider)
-- **Tabela/lista detalhada** com colunas:
-  - Empresa, Setor, Localizacao, Revenue, EBITDA, Score, Status, Acoes
-- **Card expandivel** ao clicar em um match:
-  - Analise completa da IA
-  - Dados financeiros da empresa lado a lado com os criterios
-  - Radar chart (Recharts) comparando dimensoes (financeiro, setor, tamanho, localizacao, risco)
-  - Botoes: Salvar, Dispensar, Iniciar Due Diligence, Ver Empresa
+### Dashboard.tsx
+- "Dashboard" → "Painel"
+- "Welcome back{...}. Role: {...}" → "Bem-vindo(a) de volta{...}. Cargo: {...}"
+- "Companies" → "Empresas"
+- "Manage company profiles and financials" → "Gerencie perfis de empresas e dados financeiros"
+- "Find compatible buyers and sellers" → "Encontre compradores e vendedores compatíveis"
+- "Automated document review" → "Análise automática de documentos"
+- "DCF and EBITDA analysis" → "Análise de DCF e EBITDA"
+- "Transaction predictions" → "Previsões de transações"
+- "Generate legal documents" → "Gere documentos legais"
+- "Comprehensive risk scoring" → "Pontuação de risco abrangente"
 
-### Aba 3: "Analytics"
-- Grafico de barras: distribuicao de scores dos matches
-- Grafico de pizza: matches por setor
-- Timeline: historico de matchings realizados
+### Companies.tsx
+- "Add Company" → "Adicionar Empresa"
+- "Edit Company" → "Editar Empresa"
+- "New Company" → "Nova Empresa"
+- "Name *" → "Nome *"
+- "Sector" → "Setor"
+- "Location" → "Localização"
+- "Size" → "Tamanho"
+- "Revenue ($)" → "Receita ($)"
+- "EBITDA ($)" → "EBITDA ($)"
+- "Cash Flow ($)" → "Fluxo de Caixa ($)"
+- "Debt ($)" → "Dívida ($)"
+- "Risk Level" → "Nível de Risco"
+- "Low" → "Baixo"
+- "Medium" → "Médio"
+- "High" → "Alto"
+- "Description" → "Descrição"
+- "Save..." / "Create" / "Update" → "Salvar..." / "Criar" / "Atualizar"
+- "Search companies..." → "Pesquisar empresas..."
+- "All Sectors" → "Todos os Setores"
+- "No companies found. Add your first company to get started." → "Nenhuma empresa encontrada. Adicione sua primeira empresa para começar."
+- "Edit" → "Editar"
+- "Delete" → "Deletar"
+- "Company created" / "Company updated" / "Company deleted" → "Empresa criada" / "Empresa atualizada" / "Empresa deletada"
 
-## Correcoes Tecnicas
+### AppSidebar.tsx
+- "Dashboard" → "Painel"
+- "Companies" → "Empresas"
+- "Matching" → "Matching"
+- "Due Diligence" → "Due Diligence"
+- "Valuation" → "Valuation"
+- "Strategy" → "Estratégia"
+- "Contracts" → "Contratos"
+- "Risk Analysis" → "Análise de Risco"
+- "Admin" → "Admin"
+- "User Management" → "Gestão de Usuários"
+- "Settings" → "Configurações"
+- "Sign Out" → "Sair"
 
-### Deduplicacao
-Antes de inserir novos matches, deletar matches anteriores do mesmo usuario com status "new" para evitar duplicatas.
+### Matching.tsx
+- "Buyer-Seller Matching" → "Matching Comprador-Vendedor"
+- "AI-powered acquisition matching engine with multi-dimensional analysis" → "Motor de matching de aquisições com inteligência artificial e análise multidimensional"
+- "Strategic Criteria" → "Critérios Estratégicos"
+- "Define the profile of your ideal acquisition target" → "Defina o perfil do seu alvo de aquisição ideal"
+- "Target Sector" → "Setor Alvo"
+- "Region" → "Região"
+- "Company Size" → "Tamanho da Empresa"
+- "Risk Tolerance" → "Tolerância ao Risco"
+- "Strategic Notes" → "Notas Estratégicas"
+- "Financial Parameters" → "Parâmetros Financeiros"
+- "Set revenue and profitability thresholds" → "Defina limites de receita e lucratividade"
+- "Min Revenue ($)" / "Max Revenue ($)" → "Receita Mín. ($)" / "Receita Máx. ($)"
+- "Min EBITDA ($)" / "Max EBITDA ($)" → "EBITDA Mín. ($)" / "EBITDA Máx. ($)"
+- "Pre-filter Preview" → "Pré-visualização de Filtro"
+- "companies match your criteria" → "empresas correspondem aos seus critérios"
+- "Run AI Matching" / "Analyzing..." → "Executar Matching IA" / "Analisando..."
+- Tabuladores: "Critérios & Busca" / "Resultados" / "Analytics"
+- "Análise Completa!" → "Matching completo!"
+- etc.
 
-### Pre-filtragem inteligente
-Filtrar empresas localmente antes de enviar para a IA:
-- Se setor definido, filtrar por setor
-- Se faixa de revenue definida, filtrar por range
-- Enviar apenas empresas relevantes (reduz custo e melhora qualidade)
+### DueDiligence.tsx
+- "Due Diligence" → "Due Diligence"
+- "Automated legal and financial document analysis" → "Análise automática de documentos legais e financeiros"
+- "New Analysis" → "Nova Análise"
+- "Select Company" → "Selecionar Empresa"
+- "Upload Document (optional)" → "Enviar Documento (opcional)"
+- "Document uploaded" → "Documento enviado"
+- "Analysis complete" → "Análise concluída"
 
-### Prompt da IA melhorado
-Atualizar o system prompt do matching no edge function para:
-- Retornar analise mais detalhada e estruturada
-- Incluir breakdown por dimensao (financial_fit, sector_fit, size_fit, location_fit, risk_fit)
-- Fornecer recomendacoes especificas para cada match
+### Valuation.tsx
+- "Company Valuation" → "Valuation de Empresa"
+- "DCF and EBITDA-based valuation models with sensitivity analysis" → "Modelos de valuation baseados em DCF e EBITDA com análise de sensibilidade"
+- "Valuation Parameters" → "Parâmetros de Valuation"
+- "Growth Rate:" → "Taxa de Crescimento:"
+- "Discount Rate:" → "Taxa de Desconto:"
+- "EBITDA Multiple:" → "Múltiplo de EBITDA:"
+- "Calculate Valuation" → "Calcular Valuation"
+- "Valuation complete" → "Valuation concluído"
 
-## Detalhes Tecnicos
+### Contracts.tsx
+- "Contract Generation" → "Geração de Contratos"
+- "AI-generated legal documents and contract templates" → "Documentos legais gerados por IA e modelos de contrato"
+- "Generate Contract" → "Gerar Contrato"
+- "Contract Type" → "Tipo de Contrato"
+- "Non-Disclosure Agreement (NDA)" → "Acordo de Não-Divulgação (NDA)"
+- "Purchase Agreement" → "Acordo de Compra"
+- "Shareholder Agreement" → "Acordo de Acionistas"
+- "Party A" / "Party B" → "Parte A" / "Parte B"
+- "Deal Value ($)" → "Valor do Acordo ($)"
+- "Effective Date" → "Data de Início"
+- "Additional Terms" → "Termos Adicionais"
+- "Contract Preview" → "Pré-visualização do Contrato"
+- "Download" → "Baixar"
+- "Contract generated" → "Contrato gerado"
 
-### Arquivos a modificar
-- `src/pages/Matching.tsx` -- reescrita completa com Tabs, charts, filtros
-- `supabase/functions/ai-analyze/index.ts` -- melhorar prompt de matching
+### Risk.tsx
+- "Risk Analysis" → "Análise de Risco"
+- "Consolidated risk dashboard across financial, legal, and operational dimensions" → "Painel consolidado de risco nas dimensões financeira, legal e operacional"
+- "Run Risk Analysis" → "Executar Análise de Risco"
+- "Analyze Risk" → "Analisar Risco"
+- "Risk Matrix" → "Matriz de Risco"
+- "Financial Risk" → "Risco Financeiro"
+- "Operational Risk" → "Risco Operacional"
+- "Risk Analysis complete" → "Análise de risco concluída"
 
-### Componentes usados
-- `Tabs` do Radix (ja instalado)
-- `Recharts` para radar chart, bar chart, pie chart (ja instalado)
-- `Slider` do Radix para filtros de range (ja instalado)
-- `Badge`, `Progress`, `Card`, `Dialog` (ja instalados)
-- `Table` do shadcn para lista de resultados
+### AdminUsers.tsx
+- "User Management" → "Gestão de Usuários"
+- "Manage platform users and roles" → "Gerencie usuários e cargos da plataforma"
+- "All Users ({count})" → "Todos os Usuários ({count})"
+- "Name" → "Nome"
+- "Company" → "Empresa"
+- "Role" → "Cargo"
+- "Joined" → "Aderido em"
+- "Actions" → "Ações"
+- "You need admin access to view this page." → "Você precisa de acesso de administrador para ver esta página."
+- "Role updated" → "Cargo atualizado"
 
-### Estrutura do resultado da IA (atualizada)
-```text
-{
-  "company_id": "uuid",
-  "compatibility_score": 82,
-  "analysis": "Detailed text...",
-  "dimensions": {
-    "financial_fit": 90,
-    "sector_fit": 75,
-    "size_fit": 80,
-    "location_fit": 70,
-    "risk_fit": 85
-  },
-  "recommendation": "Strong candidate for acquisition..."
-}
-```
+## Detalhes Técnicos
 
-### Fluxo de execucao
-1. Atualizar edge function com prompt melhorado
-2. Reescrever Matching.tsx com layout de 3 abas
-3. Implementar pre-filtragem e deduplicacao
-4. Adicionar charts e analytics
-5. Testar end-to-end
+### Estratégia de tradução
+
+1. **Textos estáticos**: Strings em português diretamente no código
+2. **Labels e placeholders**: Tradução em cada campo de input
+3. **Mensagens de toast**: Tradução de títulos e descrições
+4. **Card titles e descriptions**: Tradução mantendo hierarquia
+5. **Tabs e filtros**: Nomes de abas e rótulos de botões traduzidos
+
+### Arquivos a modificar (todos em src/pages/)
+
+- Auth.tsx
+- Dashboard.tsx
+- Companies.tsx
+- Matching.tsx
+- DueDiligence.tsx
+- Valuation.tsx
+- Contracts.tsx
+- Risk.tsx
+- AdminUsers.tsx
+- AppSidebar.tsx
+
+### Escala de trabalho
+
+Total de ~150+ strings em inglês a traduzir para português. A tradução é direta, preservando toda a lógica e estrutura do código.
 
