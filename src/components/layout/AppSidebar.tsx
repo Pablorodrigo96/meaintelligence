@@ -9,6 +9,7 @@ import {
   TrendingUp,
   FileText,
   AlertTriangle,
+  Layers,
   Settings,
   LogOut,
   ChevronLeft,
@@ -27,6 +28,7 @@ const navItems = [
   { label: "Valuation", icon: Calculator, path: "/valuation" },
   { label: "Estratégia", icon: TrendingUp, path: "/strategy" },
   { label: "Contratos", icon: FileText, path: "/contracts" },
+  { label: "PMI", icon: Layers, path: "/pmi" },
   { label: "Análise de Risco", icon: AlertTriangle, path: "/risk" },
 ];
 

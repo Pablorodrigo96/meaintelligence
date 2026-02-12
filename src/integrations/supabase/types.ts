@@ -286,6 +286,62 @@ export type Database = {
           },
         ]
       }
+      pmi_activities: {
+        Row: {
+          activity: string
+          area: string
+          created_at: string
+          deadline: string
+          discipline: string
+          group_name: string
+          id: string
+          milestone: string
+          notes: string | null
+          status: string
+          transaction_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          activity: string
+          area: string
+          created_at?: string
+          deadline: string
+          discipline: string
+          group_name: string
+          id?: string
+          milestone: string
+          notes?: string | null
+          status?: string
+          transaction_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          activity?: string
+          area?: string
+          created_at?: string
+          deadline?: string
+          discipline?: string
+          group_name?: string
+          id?: string
+          milestone?: string
+          notes?: string | null
+          status?: string
+          transaction_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pmi_activities_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null

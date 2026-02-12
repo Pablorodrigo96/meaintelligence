@@ -15,6 +15,7 @@ import Valuation from "./pages/Valuation";
 import Strategy from "./pages/Strategy";
 import Contracts from "./pages/Contracts";
 import Risk from "./pages/Risk";
+import PMI from "./pages/PMI";
 import AdminUsers from "./pages/AdminUsers";
 import NotFound from "./pages/NotFound";
 
@@ -44,6 +45,7 @@ const App = () => (
               <Route path="/valuation" element={<Valuation />} />
               <Route path="/strategy" element={<Strategy />} />
               <Route path="/contracts" element={<Contracts />} />
+              <Route path="/pmi" element={<PMI />} />
               <Route path="/risk" element={<Risk />} />
               <Route path="/admin/users" element={<AdminUsers />} />
             </Route>
