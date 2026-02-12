@@ -9,13 +9,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { ChevronDown, ChevronRight, Layers, Filter, CalendarIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, Filter, CalendarIcon, Plus, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import PMIDashboard from "@/components/pmi/PMIDashboard";
+import PMIActivityDialog, { type ActivityFormData } from "@/components/pmi/PMIActivityDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type ActivityStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -37,6 +48,9 @@ export default function PMI() {
   const [expandedDisciplines, setExpandedDisciplines] = useState<Set<string>>(new Set());
   const [filterDeadline, setFilterDeadline] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingActivity, setEditingActivity] = useState<(ActivityFormData & { activityId: number; dbId?: string }) | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ activityId: number; dbId?: string } | null>(null);
   const activitiesRef = useRef<ActivityState[]>([]);
 
   useEffect(() => {
@@ -173,6 +187,101 @@ export default function PMI() {
 
     if (error) console.error("Error updating due_date:", error);
   }, []);
+
+  const addActivity = async (data: ActivityFormData) => {
+    if (!user) return;
+    const { data: inserted, error } = await supabase
+      .from("pmi_activities")
+      .insert({
+        user_id: user.id,
+        group_name: data.group,
+        discipline: data.discipline,
+        area: data.area,
+        milestone: data.milestone,
+        activity: data.activity,
+        deadline: data.deadline,
+        responsible: data.responsible || null,
+        due_date: data.dueDate || null,
+        status: "pending",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      toast({ title: "Erro ao adicionar atividade", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    toast({ title: "Atividade adicionada!" });
+    await loadActivities();
+  };
+
+  const editActivity = async (activityId: number, dbId: string | undefined, data: ActivityFormData) => {
+    if (!dbId) return;
+    const { error } = await supabase
+      .from("pmi_activities")
+      .update({
+        group_name: data.group,
+        discipline: data.discipline,
+        area: data.area,
+        milestone: data.milestone,
+        activity: data.activity,
+        deadline: data.deadline,
+        responsible: data.responsible || null,
+        due_date: data.dueDate || null,
+      })
+      .eq("id", dbId);
+
+    if (error) {
+      toast({ title: "Erro ao editar atividade", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    toast({ title: "Atividade atualizada!" });
+    await loadActivities();
+  };
+
+  const deleteActivity = async () => {
+    if (!deleteTarget?.dbId) return;
+    const { error } = await supabase
+      .from("pmi_activities")
+      .delete()
+      .eq("id", deleteTarget.dbId);
+
+    if (error) {
+      toast({ title: "Erro ao excluir atividade", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    toast({ title: "Atividade excluída!" });
+    setDeleteTarget(null);
+    await loadActivities();
+  };
+
+  const handleSaveDialog = (data: ActivityFormData) => {
+    if (editingActivity) {
+      editActivity(editingActivity.activityId, editingActivity.dbId, data);
+    } else {
+      addActivity(data);
+    }
+    setEditingActivity(null);
+  };
+
+  const openEditDialog = (item: any, state: ActivityState | undefined) => {
+    setEditingActivity({
+      activityId: item.id,
+      dbId: state?.dbId,
+      group: item.group,
+      discipline: item.discipline,
+      area: item.area,
+      milestone: item.milestone,
+      activity: item.activity,
+      deadline: item.deadline,
+      responsible: state?.responsible || "",
+      dueDate: state?.dueDate || null,
+    });
+    setDialogOpen(true);
+  };
 
   const getActivityStatus = (id: number): ActivityStatus => {
     return activities.find((a) => a.id === id)?.status || "pending";
@@ -318,6 +427,11 @@ export default function PMI() {
                   ))}
                 </SelectContent>
               </Select>
+              <div className="ml-auto">
+                <Button size="sm" onClick={() => { setEditingActivity(null); setDialogOpen(true); }}>
+                  <Plus className="w-4 h-4 mr-1" /> Nova Atividade
+                </Button>
+              </div>
             </div>
 
             {/* Groups */}
@@ -379,6 +493,7 @@ export default function PMI() {
                                         <TableHead className="w-[120px]">Data Prazo</TableHead>
                                         <TableHead className="w-[70px] text-center">Prazo</TableHead>
                                         <TableHead className="w-[140px]">Status</TableHead>
+                                        <TableHead className="w-[80px] text-center">Ações</TableHead>
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -450,6 +565,16 @@ export default function PMI() {
                                                 </SelectContent>
                                               </Select>
                                             </TableCell>
+                                            <TableCell className="text-center">
+                                              <div className="flex items-center justify-center gap-1">
+                                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDialog(item, state)}>
+                                                  <Pencil className="h-3.5 w-3.5" />
+                                                </Button>
+                                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteTarget({ activityId: item.id, dbId: state?.dbId })}>
+                                                  <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                              </div>
+                                            </TableCell>
                                           </TableRow>
                                         );
                                       })}
@@ -469,6 +594,28 @@ export default function PMI() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <PMIActivityDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        activity={editingActivity || undefined}
+        onSave={handleSaveDialog}
+      />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir atividade?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir esta atividade? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={deleteActivity}>Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
