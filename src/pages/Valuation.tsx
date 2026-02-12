@@ -56,7 +56,7 @@ export default function Valuation() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
-  const formatVal = (v: number) => v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${v?.toLocaleString()}`;
+  const formatVal = (v: number) => v >= 1e9 ? `R$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `R$${(v / 1e6).toFixed(1)}M` : `R$${v?.toLocaleString("pt-BR")}`;
 
   return (
     <div className="space-y-6">
@@ -121,7 +121,7 @@ export default function Valuation() {
                   <LineChart data={result.sensitivity_data}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="growth_rate" label={{ value: "Taxa de Crescimento %", position: "bottom" }} />
-                    <YAxis tickFormatter={(v) => `$${(v / 1e6).toFixed(0)}M`} />
+                    <YAxis tickFormatter={(v) => `R$${(v / 1e6).toFixed(0)}M`} />
                     <Tooltip formatter={(v: number) => formatVal(v)} />
                     <Legend />
                     <Line type="monotone" dataKey="value" stroke="hsl(217, 72%, 45%)" strokeWidth={2} name="Valuation" />
