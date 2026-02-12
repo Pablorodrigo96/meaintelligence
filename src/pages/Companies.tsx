@@ -18,7 +18,8 @@ const sizes = ["Small (<$10M)", "Medium ($10M-$100M)", "Large ($100M-$1B)", "Ent
 
 function riskBadge(level: string | null) {
   const colors: Record<string, string> = { low: "bg-success/10 text-success", medium: "bg-warning/10 text-warning", high: "bg-destructive/10 text-destructive" };
-  return <Badge className={colors[level || "medium"] || colors.medium}>{level || "medium"}</Badge>;
+  const labels: Record<string, string> = { low: "Baixo", medium: "Médio", high: "Alto" };
+  return <Badge className={colors[level || "medium"] || colors.medium}>{labels[level || "medium"] || level}</Badge>;
 }
 
 function formatCurrency(val: number | null) {
@@ -78,9 +79,9 @@ export default function Companies() {
       setDialogOpen(false);
       setEditingId(null);
       setForm(emptyCompany);
-      toast({ title: editingId ? "Company updated" : "Company created" });
+      toast({ title: editingId ? "Empresa atualizada" : "Empresa criada" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -90,7 +91,7 @@ export default function Companies() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["companies"] });
-      toast({ title: "Company deleted" });
+      toast({ title: "Empresa deletada" });
     },
   });
 
@@ -112,50 +113,50 @@ export default function Companies() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-display font-bold text-foreground">Companies</h1>
-          <p className="text-muted-foreground mt-1">Manage company profiles, financials, and risk classifications</p>
+          <h1 className="text-3xl font-display font-bold text-foreground">Empresas</h1>
+          <p className="text-muted-foreground mt-1">Gerencie perfis de empresas, dados financeiros e classificações de risco</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button onClick={openNew}><Plus className="w-4 h-4 mr-2" />Add Company</Button>
+            <Button onClick={openNew}><Plus className="w-4 h-4 mr-2" />Adicionar Empresa</Button>
           </DialogTrigger>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="font-display">{editingId ? "Edit Company" : "New Company"}</DialogTitle>
+              <DialogTitle className="font-display">{editingId ? "Editar Empresa" : "Nova Empresa"}</DialogTitle>
             </DialogHeader>
             <form onSubmit={(e) => { e.preventDefault(); saveMutation.mutate(form); }} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Name *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-                <div className="space-y-2"><Label>Sector</Label>
+                <div className="space-y-2"><Label>Nome *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
+                <div className="space-y-2"><Label>Setor</Label>
                   <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
-                    <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Selecionar setor" /></SelectTrigger>
                     <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Location</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Size</Label>
+                <div className="space-y-2"><Label>Localização</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Tamanho</Label>
                   <Select value={form.size} onValueChange={(v) => setForm({ ...form, size: v })}>
-                    <SelectTrigger><SelectValue placeholder="Select size" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Selecionar tamanho" /></SelectTrigger>
                     <SelectContent>{sizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Revenue ($)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Receita ($)</Label><Input type="number" value={form.revenue} onChange={(e) => setForm({ ...form, revenue: e.target.value })} /></div>
                 <div className="space-y-2"><Label>EBITDA ($)</Label><Input type="number" value={form.ebitda} onChange={(e) => setForm({ ...form, ebitda: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Cash Flow ($)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Debt ($)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Risk Level</Label>
+                <div className="space-y-2"><Label>Fluxo de Caixa ($)</Label><Input type="number" value={form.cash_flow} onChange={(e) => setForm({ ...form, cash_flow: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Dívida ($)</Label><Input type="number" value={form.debt} onChange={(e) => setForm({ ...form, debt: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Nível de Risco</Label>
                   <Select value={form.risk_level} onValueChange={(v) => setForm({ ...form, risk_level: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="low">Baixo</SelectItem>
+                      <SelectItem value="medium">Médio</SelectItem>
+                      <SelectItem value="high">Alto</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-              <Button type="submit" className="w-full" disabled={saveMutation.isPending}>{saveMutation.isPending ? "Saving..." : editingId ? "Update" : "Create"}</Button>
+              <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+              <Button type="submit" className="w-full" disabled={saveMutation.isPending}>{saveMutation.isPending ? "Salvando..." : editingId ? "Atualizar" : "Criar"}</Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -164,21 +165,21 @@ export default function Companies() {
       <div className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search companies..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Pesquisar empresas..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Select value={sectorFilter} onValueChange={setSectorFilter}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="All Sectors" /></SelectTrigger>
+          <SelectTrigger className="w-48"><SelectValue placeholder="Todos os Setores" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Sectors</SelectItem>
+            <SelectItem value="all">Todos os Setores</SelectItem>
             {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <div className="text-center py-12 text-muted-foreground">Carregando...</div>
       ) : filtered.length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-muted-foreground">No companies found. Add your first company to get started.</CardContent></Card>
+        <Card><CardContent className="py-12 text-center text-muted-foreground">Nenhuma empresa encontrada. Adicione sua primeira empresa para começar.</CardContent></Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((c) => (
@@ -195,15 +196,15 @@ export default function Companies() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div><span className="text-muted-foreground">Revenue:</span> {formatCurrency(c.revenue)}</div>
+                  <div><span className="text-muted-foreground">Receita:</span> {formatCurrency(c.revenue)}</div>
                   <div><span className="text-muted-foreground">EBITDA:</span> {formatCurrency(c.ebitda)}</div>
-                  <div><span className="text-muted-foreground">Cash Flow:</span> {formatCurrency(c.cash_flow)}</div>
-                  <div><span className="text-muted-foreground">Debt:</span> {formatCurrency(c.debt)}</div>
+                  <div><span className="text-muted-foreground">Fluxo de Caixa:</span> {formatCurrency(c.cash_flow)}</div>
+                  <div><span className="text-muted-foreground">Dívida:</span> {formatCurrency(c.debt)}</div>
                 </div>
                 {c.description && <p className="text-sm text-muted-foreground line-clamp-2">{c.description}</p>}
                 <div className="flex gap-2 pt-1">
-                  <Button variant="outline" size="sm" onClick={() => openEdit(c)}><Pencil className="w-3 h-3 mr-1" />Edit</Button>
-                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => deleteMutation.mutate(c.id)}><Trash2 className="w-3 h-3 mr-1" />Delete</Button>
+                  <Button variant="outline" size="sm" onClick={() => openEdit(c)}><Pencil className="w-3 h-3 mr-1" />Editar</Button>
+                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => deleteMutation.mutate(c.id)}><Trash2 className="w-3 h-3 mr-1" />Deletar</Button>
                 </div>
               </CardContent>
             </Card>

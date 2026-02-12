@@ -37,22 +37,21 @@ export default function AdminUsers() {
 
   const changeRoleMutation = useMutation({
     mutationFn: async ({ userId, newRole }: { userId: string; newRole: string }) => {
-      // Delete existing roles then insert new one
       await supabase.from("user_roles").delete().eq("user_id", userId);
       const { error } = await supabase.from("user_roles").insert({ user_id: userId, role: newRole as any });
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-roles"] });
-      toast({ title: "Role updated" });
+      toast({ title: "Cargo atualizado" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">You need admin access to view this page.</p>
+        <p className="text-muted-foreground">Você precisa de acesso de administrador para ver esta página.</p>
       </div>
     );
   }
@@ -63,30 +62,31 @@ export default function AdminUsers() {
   };
 
   const roleColor: Record<string, string> = { admin: "bg-destructive/10 text-destructive", buyer: "bg-primary/10 text-primary", seller: "bg-accent/10 text-accent", advisor: "bg-warning/10 text-warning" };
+  const roleLabels: Record<string, string> = { admin: "Admin", buyer: "Comprador", seller: "Vendedor", advisor: "Consultor" };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">User Management</h1>
-        <p className="text-muted-foreground mt-1">Manage platform users and roles</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Gestão de Usuários</h1>
+        <p className="text-muted-foreground mt-1">Gerencie usuários e cargos da plataforma</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-display flex items-center gap-2"><Users className="w-5 h-5 text-primary" />All Users ({profiles.length})</CardTitle>
+          <CardTitle className="font-display flex items-center gap-2"><Users className="w-5 h-5 text-primary" />Todos os Usuários ({profiles.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+            <div className="text-center py-8 text-muted-foreground">Carregando...</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Empresa</TableHead>
+                  <TableHead>Cargo</TableHead>
+                  <TableHead>Aderido em</TableHead>
+                  <TableHead>Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -96,7 +96,7 @@ export default function AdminUsers() {
                     <TableRow key={p.id}>
                       <TableCell className="font-medium">{p.full_name || "—"}</TableCell>
                       <TableCell>{p.company_name || "—"}</TableCell>
-                      <TableCell><Badge className={roleColor[currentRole] || ""}>{currentRole}</Badge></TableCell>
+                      <TableCell><Badge className={roleColor[currentRole] || ""}>{roleLabels[currentRole] || currentRole}</Badge></TableCell>
                       <TableCell className="text-sm text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</TableCell>
                       <TableCell>
                         <Select value={currentRole} onValueChange={(v) => changeRoleMutation.mutate({ userId: p.user_id, newRole: v })}>
@@ -104,9 +104,9 @@ export default function AdminUsers() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="buyer">Buyer</SelectItem>
-                            <SelectItem value="seller">Seller</SelectItem>
-                            <SelectItem value="advisor">Advisor</SelectItem>
+                            <SelectItem value="buyer">Comprador</SelectItem>
+                            <SelectItem value="seller">Vendedor</SelectItem>
+                            <SelectItem value="advisor">Consultor</SelectItem>
                             <SelectItem value="admin">Admin</SelectItem>
                           </SelectContent>
                         </Select>

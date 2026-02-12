@@ -278,8 +278,8 @@ export default function Matching() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Buyer-Seller Matching</h1>
-        <p className="text-muted-foreground mt-1">AI-powered acquisition matching engine with multi-dimensional analysis</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Matching Comprador-Vendedor</h1>
+        <p className="text-muted-foreground mt-1">Motor de matching de aquisições com inteligência artificial e análise multidimensional</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -314,20 +314,20 @@ export default function Matching() {
             {/* Left column: strategic criteria */}
             <Card>
               <CardHeader>
-                <CardTitle className="font-display flex items-center gap-2"><Globe className="w-5 h-5 text-accent" />Strategic Criteria</CardTitle>
-                <CardDescription>Define the profile of your ideal acquisition target</CardDescription>
+                <CardTitle className="font-display flex items-center gap-2"><Globe className="w-5 h-5 text-accent" />Critérios Estratégicos</CardTitle>
+                <CardDescription>Defina o perfil do seu alvo de aquisição ideal</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Target Sector</Label>
+                    <Label>Setor Alvo</Label>
                     <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
-                      <SelectTrigger><SelectValue placeholder="Any sector" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Qualquer setor" /></SelectTrigger>
                       <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Region</Label>
+                    <Label>Região</Label>
                     <Select value={criteria.target_location} onValueChange={(v) => setCriteria({ ...criteria, target_location: v })}>
                       <SelectTrigger><SelectValue placeholder="Global" /></SelectTrigger>
                       <SelectContent>{regions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
@@ -336,14 +336,14 @@ export default function Matching() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Company Size</Label>
+                    <Label>Tamanho da Empresa</Label>
                     <Select value={criteria.target_size} onValueChange={(v) => setCriteria({ ...criteria, target_size: v })}>
-                      <SelectTrigger><SelectValue placeholder="Any size" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Qualquer tamanho" /></SelectTrigger>
                       <SelectContent>{companySizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Risk Tolerance</Label>
+                    <Label>Tolerância ao Risco</Label>
                     <Select value={criteria.risk_level} onValueChange={(v) => setCriteria({ ...criteria, risk_level: v })}>
                       <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                       <SelectContent>{riskLevels.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
@@ -351,11 +351,11 @@ export default function Matching() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Strategic Notes</Label>
+                    <Label>Notas Estratégicas</Label>
                   <Textarea
                     value={criteria.notes}
                     onChange={(e) => setCriteria({ ...criteria, notes: e.target.value })}
-                    placeholder="E.g. Looking for companies with strong recurring revenue, ideally SaaS, with proven management team..."
+                    placeholder="Ex.: Buscando empresas com receita recorrente forte, idealmente SaaS, com equipe de gestão comprovada..."
                     className="min-h-[100px]"
                   />
                 </div>
@@ -365,28 +365,28 @@ export default function Matching() {
             {/* Right column: financial criteria */}
             <Card>
               <CardHeader>
-                <CardTitle className="font-display flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" />Financial Parameters</CardTitle>
-                <CardDescription>Set revenue and profitability thresholds</CardDescription>
+                <CardTitle className="font-display flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" />Parâmetros Financeiros</CardTitle>
+                <CardDescription>Defina limites de receita e lucratividade</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Min Revenue ($)</Label>
+                    <Label>Receita Mín. ($)</Label>
                     <Input type="number" value={criteria.min_revenue} onChange={(e) => setCriteria({ ...criteria, min_revenue: e.target.value })} placeholder="0" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Max Revenue ($)</Label>
-                    <Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} placeholder="No limit" />
+                    <Label>Receita Máx. ($)</Label>
+                    <Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} placeholder="Sem limite" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Min EBITDA ($)</Label>
+                    <Label>EBITDA Mín. ($)</Label>
                     <Input type="number" value={criteria.min_ebitda} onChange={(e) => setCriteria({ ...criteria, min_ebitda: e.target.value })} placeholder="0" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Max EBITDA ($)</Label>
-                    <Input type="number" value={criteria.max_ebitda} onChange={(e) => setCriteria({ ...criteria, max_ebitda: e.target.value })} placeholder="No limit" />
+                    <Label>EBITDA Máx. ($)</Label>
+                    <Input type="number" value={criteria.max_ebitda} onChange={(e) => setCriteria({ ...criteria, max_ebitda: e.target.value })} placeholder="Sem limite" />
                   </div>
                 </div>
 
@@ -394,10 +394,10 @@ export default function Matching() {
                 <div className="rounded-lg border border-border bg-muted/50 p-4 space-y-2">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <Filter className="w-4 h-4 text-muted-foreground" />
-                    Pre-filter Preview
+                    Pré-visualização de Filtro
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    <span className="font-semibold text-foreground">{filteredCompanies.length}</span> of {companies.length} companies match your criteria
+                    <span className="font-semibold text-foreground">{filteredCompanies.length}</span> de {companies.length} empresas correspondem aos seus critérios
                   </p>
                   <Progress value={companies.length > 0 ? (filteredCompanies.length / companies.length) * 100 : 0} className="h-2" />
                 </div>
@@ -409,12 +409,12 @@ export default function Matching() {
                   size="lg"
                 >
                   <Zap className="w-5 h-5 mr-2" />
-                  {runMatchMutation.isPending ? "Analyzing with AI..." : `Run AI Matching (${filteredCompanies.length} companies)`}
+                  {runMatchMutation.isPending ? "Analisando com IA..." : `Executar Matching IA (${filteredCompanies.length} empresas)`}
                 </Button>
                 {runMatchMutation.isPending && (
                   <div className="space-y-2">
                     <Progress value={undefined} className="h-1 animate-pulse" />
-                    <p className="text-xs text-center text-muted-foreground">AI is evaluating each company across 5 dimensions...</p>
+                    <p className="text-xs text-center text-muted-foreground">A IA está avaliando cada empresa em 5 dimensões...</p>
                   </div>
                 )}
               </CardContent>
@@ -431,10 +431,10 @@ export default function Matching() {
           ) : matches.length === 0 ? (
             <Card className="py-16 flex flex-col items-center justify-center text-center">
               <Search className="w-12 h-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-display font-semibold">No matches yet</h3>
-              <p className="text-muted-foreground mt-1 max-w-sm">Define your criteria and run AI matching to discover compatible acquisition targets.</p>
+               <h3 className="text-lg font-display font-semibold">Nenhum match ainda</h3>
+              <p className="text-muted-foreground mt-1 max-w-sm">Defina seus critérios e execute o matching IA para descobrir alvos de aquisição compatíveis.</p>
               <Button className="mt-4" onClick={() => setActiveTab("criteria")}>
-                <Target className="w-4 h-4 mr-2" />Go to Criteria
+                <Target className="w-4 h-4 mr-2" />Ir para Critérios
               </Button>
             </Card>
           ) : (
@@ -442,26 +442,26 @@ export default function Matching() {
               {/* Stats row */}
               <div className="grid gap-4 md:grid-cols-4">
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total Matches</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total de Matches</CardTitle></CardHeader>
                   <CardContent><p className="text-3xl font-bold">{matches.length}</p></CardContent>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Avg. Score</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Score Médio</CardTitle></CardHeader>
                   <CardContent><p className="text-3xl font-bold">{avgScore}%</p></CardContent>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">High Compatibility</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Alta Compatibilidade</CardTitle></CardHeader>
                   <CardContent>
                     <p className="text-3xl font-bold text-success">{highMatches}</p>
                     <p className="text-xs text-muted-foreground">Score ≥ 70%</p>
                   </CardContent>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Distribution</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Distribuição</CardTitle></CardHeader>
                   <CardContent className="flex items-center gap-2">
-                    <Badge className="bg-success/15 text-success border-0">{highMatches} High</Badge>
-                    <Badge className="bg-warning/15 text-warning border-0">{medMatches} Med</Badge>
-                    <Badge className="bg-destructive/15 text-destructive border-0">{lowMatches} Low</Badge>
+                    <Badge className="bg-success/15 text-success border-0">{highMatches} Alto</Badge>
+                    <Badge className="bg-warning/15 text-warning border-0">{medMatches} Méd</Badge>
+                    <Badge className="bg-destructive/15 text-destructive border-0">{lowMatches} Baixo</Badge>
                   </CardContent>
                 </Card>
               </div>
@@ -473,18 +473,18 @@ export default function Matching() {
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="new">New</SelectItem>
-                      <SelectItem value="saved">Saved</SelectItem>
-                      <SelectItem value="dismissed">Dismissed</SelectItem>
+                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="new">Novos</SelectItem>
+                      <SelectItem value="saved">Salvos</SelectItem>
+                      <SelectItem value="dismissed">Dispensados</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="flex items-center gap-3 flex-1 max-w-xs">
-                  <Label className="text-sm whitespace-nowrap">Min Score: {minScoreFilter[0]}%</Label>
+                  <Label className="text-sm whitespace-nowrap">Score Mín.: {minScoreFilter[0]}%</Label>
                   <Slider value={minScoreFilter} onValueChange={setMinScoreFilter} max={100} step={5} className="flex-1" />
                 </div>
-                <p className="text-sm text-muted-foreground ml-auto">{displayMatches.length} results</p>
+                <p className="text-sm text-muted-foreground ml-auto">{displayMatches.length} resultados</p>
               </div>
 
               {/* Results table */}
@@ -492,14 +492,14 @@ export default function Matching() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Company</TableHead>
-                      <TableHead>Sector</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead>Empresa</TableHead>
+                      <TableHead>Setor</TableHead>
+                      <TableHead>Localização</TableHead>
+                      <TableHead className="text-right">Receita</TableHead>
                       <TableHead className="text-right">EBITDA</TableHead>
                       <TableHead className="text-center">Score</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -515,7 +515,7 @@ export default function Matching() {
                             className={`cursor-pointer hover:bg-muted/50 transition-colors ${m.status === "dismissed" ? "opacity-40" : ""}`}
                             onClick={() => setExpandedMatch(isExpanded ? null : m.id)}
                           >
-                            <TableCell className="font-medium">{m.companies?.name || "Unknown"}</TableCell>
+                            <TableCell className="font-medium">{m.companies?.name || "Desconhecido"}</TableCell>
                             <TableCell><Badge variant="outline" className="text-xs">{m.companies?.sector || "—"}</Badge></TableCell>
                             <TableCell className="text-sm text-muted-foreground">{m.companies?.location || "—"}</TableCell>
                             <TableCell className="text-right text-sm">{formatCurrency(m.companies?.revenue ?? null)}</TableCell>
@@ -547,18 +547,18 @@ export default function Matching() {
                                   {/* Left: Analysis text */}
                                   <div className="space-y-4">
                                     <div>
-                                      <h4 className="font-display font-semibold text-sm mb-2">AI Analysis</h4>
+                                      <h4 className="font-display font-semibold text-sm mb-2">Análise da IA</h4>
                                       <p className="text-sm text-muted-foreground leading-relaxed">{analysis}</p>
                                     </div>
                                     {recommendation && (
                                       <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
-                                        <h4 className="font-display font-semibold text-sm mb-1 text-accent">Recommendation</h4>
+                                        <h4 className="font-display font-semibold text-sm mb-1 text-accent">Recomendação</h4>
                                         <p className="text-sm text-muted-foreground">{recommendation}</p>
                                       </div>
                                     )}
                                     <div className="grid grid-cols-2 gap-3 text-sm">
                                       <div className="rounded-lg border p-3">
-                                        <p className="text-muted-foreground">Revenue</p>
+                                        <p className="text-muted-foreground">Receita</p>
                                         <p className="font-semibold">{formatCurrency(m.companies?.revenue ?? null)}</p>
                                       </div>
                                       <div className="rounded-lg border p-3">
@@ -566,11 +566,11 @@ export default function Matching() {
                                         <p className="font-semibold">{formatCurrency(m.companies?.ebitda ?? null)}</p>
                                       </div>
                                       <div className="rounded-lg border p-3">
-                                        <p className="text-muted-foreground">Size</p>
+                                        <p className="text-muted-foreground">Tamanho</p>
                                         <p className="font-semibold">{m.companies?.size || "N/A"}</p>
                                       </div>
                                       <div className="rounded-lg border p-3">
-                                        <p className="text-muted-foreground">Risk Level</p>
+                                        <p className="text-muted-foreground">Nível de Risco</p>
                                         <p className="font-semibold">{m.companies?.risk_level || "N/A"}</p>
                                       </div>
                                     </div>
@@ -579,14 +579,14 @@ export default function Matching() {
                                   {/* Right: Radar chart */}
                                   {dimensions && (
                                     <div>
-                                      <h4 className="font-display font-semibold text-sm mb-2 text-center">Compatibility Dimensions</h4>
+                                      <h4 className="font-display font-semibold text-sm mb-2 text-center">Dimensões de Compatibilidade</h4>
                                       <ResponsiveContainer width="100%" height={280}>
                                         <RadarChart data={[
-                                          { dim: "Financial", value: dimensions.financial_fit },
-                                          { dim: "Sector", value: dimensions.sector_fit },
-                                          { dim: "Size", value: dimensions.size_fit },
-                                          { dim: "Location", value: dimensions.location_fit },
-                                          { dim: "Risk", value: dimensions.risk_fit },
+                                           { dim: "Financeiro", value: dimensions.financial_fit },
+                                          { dim: "Setor", value: dimensions.sector_fit },
+                                          { dim: "Tamanho", value: dimensions.size_fit },
+                                          { dim: "Localização", value: dimensions.location_fit },
+                                          { dim: "Risco", value: dimensions.risk_fit },
                                         ]}>
                                           <PolarGrid stroke="hsl(var(--border))" />
                                           <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
@@ -615,15 +615,15 @@ export default function Matching() {
           {matches.length === 0 ? (
             <Card className="py-16 flex flex-col items-center justify-center text-center">
               <BarChart3 className="w-12 h-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-display font-semibold">No data yet</h3>
-              <p className="text-muted-foreground mt-1">Run matching first to see analytics.</p>
+               <h3 className="text-lg font-display font-semibold">Sem dados ainda</h3>
+              <p className="text-muted-foreground mt-1">Execute o matching primeiro para ver as análises.</p>
             </Card>
           ) : (
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Score distribution */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-display text-base">Score Distribution</CardTitle>
+                  <CardTitle className="font-display text-base">Distribuição de Scores</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={280}>
@@ -641,7 +641,7 @@ export default function Matching() {
               {/* Sector breakdown */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-display text-base">Matches by Sector</CardTitle>
+                  <CardTitle className="font-display text-base">Matches por Setor</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={280}>
@@ -660,7 +660,7 @@ export default function Matching() {
               {/* Match history timeline */}
               <Card className="lg:col-span-2">
                 <CardHeader>
-                  <CardTitle className="font-display text-base">Recent Matching Activity</CardTitle>
+                  <CardTitle className="font-display text-base">Atividade Recente de Matching</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
@@ -668,7 +668,7 @@ export default function Matching() {
                       <div key={c.id} className="flex items-center gap-4 rounded-lg border p-3">
                         <div className="h-2 w-2 rounded-full bg-primary" />
                         <div className="flex-1">
-                          <p className="text-sm font-medium">{c.target_sector || "All sectors"} · {c.target_location || "Global"}</p>
+                          <p className="text-sm font-medium">{c.target_sector || "Todos os setores"} · {c.target_location || "Global"}</p>
                           <p className="text-xs text-muted-foreground">
                             Revenue: {c.min_revenue ? formatCurrency(c.min_revenue) : "Any"} – {c.max_revenue ? formatCurrency(c.max_revenue) : "Any"}
                           </p>

@@ -43,7 +43,7 @@ export default function Valuation() {
 
   const valuateMutation = useMutation({
     mutationFn: async () => {
-      if (!company) throw new Error("Select a company");
+      if (!company) throw new Error("Selecione uma empresa");
       const financials = { revenue: company.revenue, ebitda: company.ebitda, cash_flow: company.cash_flow, debt: company.debt };
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "valuation", data: { financials, growthRate, discountRate, ebitdaMultiple } } });
       if (error) throw error;
@@ -52,8 +52,8 @@ export default function Valuation() {
       await supabase.from("valuations").insert({ company_id: selectedCompany, user_id: user!.id, method: "dcf", inputs: { growthRate, discountRate, ebitdaMultiple } as any, result: data.result as any });
       queryClient.invalidateQueries({ queryKey: ["valuations"] });
     },
-    onSuccess: () => toast({ title: "Valuation complete" }),
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onSuccess: () => toast({ title: "Valuation concluído" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const formatVal = (v: number) => v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${v?.toLocaleString()}`;
@@ -61,44 +61,44 @@ export default function Valuation() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Company Valuation</h1>
-        <p className="text-muted-foreground mt-1">DCF and EBITDA-based valuation models with sensitivity analysis</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">Valuation de Empresa</h1>
+        <p className="text-muted-foreground mt-1">Modelos de valuation baseados em DCF e EBITDA com análise de sensibilidade</p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Calculator className="w-5 h-5 text-primary" />Valuation Parameters</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Calculator className="w-5 h-5 text-primary" />Parâmetros de Valuation</CardTitle></CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
-            <Label>Select Company</Label>
+            <Label>Selecionar Empresa</Label>
             <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-              <SelectTrigger><SelectValue placeholder="Choose a company" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Escolha uma empresa" /></SelectTrigger>
               <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           {company && (
             <div className="grid grid-cols-4 gap-4 p-3 bg-muted rounded-lg text-sm">
-              <div><span className="text-muted-foreground">Revenue:</span> {formatVal(company.revenue || 0)}</div>
+              <div><span className="text-muted-foreground">Receita:</span> {formatVal(company.revenue || 0)}</div>
               <div><span className="text-muted-foreground">EBITDA:</span> {formatVal(company.ebitda || 0)}</div>
-              <div><span className="text-muted-foreground">Cash Flow:</span> {formatVal(company.cash_flow || 0)}</div>
-              <div><span className="text-muted-foreground">Debt:</span> {formatVal(company.debt || 0)}</div>
+              <div><span className="text-muted-foreground">Fluxo de Caixa:</span> {formatVal(company.cash_flow || 0)}</div>
+              <div><span className="text-muted-foreground">Dívida:</span> {formatVal(company.debt || 0)}</div>
             </div>
           )}
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Growth Rate: {growthRate}%</Label>
+              <Label>Taxa de Crescimento: {growthRate}%</Label>
               <Slider value={[growthRate]} onValueChange={([v]) => setGrowthRate(v)} min={0} max={30} step={0.5} />
             </div>
             <div className="space-y-2">
-              <Label>Discount Rate: {discountRate}%</Label>
+              <Label>Taxa de Desconto: {discountRate}%</Label>
               <Slider value={[discountRate]} onValueChange={([v]) => setDiscountRate(v)} min={1} max={25} step={0.5} />
             </div>
             <div className="space-y-2">
-              <Label>EBITDA Multiple: {ebitdaMultiple}x</Label>
+              <Label>Múltiplo de EBITDA: {ebitdaMultiple}x</Label>
               <Slider value={[ebitdaMultiple]} onValueChange={([v]) => setEbitdaMultiple(v)} min={1} max={30} step={0.5} />
             </div>
           </div>
           <Button onClick={() => valuateMutation.mutate()} disabled={!selectedCompany || valuateMutation.isPending}>
-            {valuateMutation.isPending ? "Calculating..." : "Calculate Valuation"}
+            {valuateMutation.isPending ? "Calculando..." : "Calcular Valuation"}
           </Button>
         </CardContent>
       </Card>
@@ -106,21 +106,21 @@ export default function Valuation() {
       {result && (
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle className="text-base font-display">Valuation Results</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base font-display">Resultados do Valuation</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {result.dcf_value && <div className="text-2xl font-bold text-primary">DCF: {formatVal(result.dcf_value)}</div>}
-              {result.ebitda_value && <div className="text-2xl font-bold text-accent">EBITDA Multiple: {formatVal(result.ebitda_value)}</div>}
+              {result.ebitda_value && <div className="text-2xl font-bold text-accent">Múltiplo EBITDA: {formatVal(result.ebitda_value)}</div>}
               {result.analysis && <p className="text-sm text-muted-foreground mt-2">{result.analysis}</p>}
             </CardContent>
           </Card>
           {Array.isArray(result.sensitivity_data) && result.sensitivity_data.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-base font-display">Sensitivity Analysis</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base font-display">Análise de Sensibilidade</CardTitle></CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={result.sensitivity_data}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="growth_rate" label={{ value: "Growth Rate %", position: "bottom" }} />
+                    <XAxis dataKey="growth_rate" label={{ value: "Taxa de Crescimento %", position: "bottom" }} />
                     <YAxis tickFormatter={(v) => `$${(v / 1e6).toFixed(0)}M`} />
                     <Tooltip formatter={(v: number) => formatVal(v)} />
                     <Legend />

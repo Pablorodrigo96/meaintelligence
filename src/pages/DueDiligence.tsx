@@ -51,9 +51,9 @@ export default function DueDiligence() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["dd-reports"] });
-      toast({ title: "Analysis complete" });
+      toast({ title: "Análise concluída" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,9 +67,9 @@ export default function DueDiligence() {
       const { data: { publicUrl } } = supabase.storage.from("documents").getPublicUrl(path);
       await supabase.from("due_diligence_reports").insert({ company_id: selectedCompany, user_id: user!.id, document_url: publicUrl, status: "pending" });
       queryClient.invalidateQueries({ queryKey: ["dd-reports"] });
-      toast({ title: "Document uploaded" });
+      toast({ title: "Documento enviado" });
     } catch (err: any) {
-      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+      toast({ title: "Falha no envio", description: err.message, variant: "destructive" });
     } finally {
       setUploading(false);
     }
@@ -81,49 +81,49 @@ export default function DueDiligence() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-display font-bold text-foreground">Due Diligence</h1>
-        <p className="text-muted-foreground mt-1">Automated legal and financial document analysis</p>
+        <p className="text-muted-foreground mt-1">Análise automática de documentos legais e financeiros</p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Shield className="w-5 h-5 text-warning" />New Analysis</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-display flex items-center gap-2"><Shield className="w-5 h-5 text-warning" />Nova Análise</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Select Company</Label>
+            <Label>Selecionar Empresa</Label>
             <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-              <SelectTrigger><SelectValue placeholder="Choose a company" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Escolha uma empresa" /></SelectTrigger>
               <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="flex gap-3">
             <div className="space-y-2">
-              <Label>Upload Document (optional)</Label>
+              <Label>Enviar Documento (opcional)</Label>
               <Input type="file" accept=".pdf,.docx,.doc,.txt" onChange={handleFileUpload} disabled={!selectedCompany || uploading} />
             </div>
           </div>
           <Button onClick={() => analyzeMutation.mutate(selectedCompany)} disabled={!selectedCompany || analyzeMutation.isPending}>
-            {analyzeMutation.isPending ? "Analyzing..." : "Run AI Analysis"}
+            {analyzeMutation.isPending ? "Analisando..." : "Executar Análise IA"}
           </Button>
         </CardContent>
       </Card>
 
       {reports.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-xl font-display font-semibold">Reports</h2>
+          <h2 className="text-xl font-display font-semibold">Relatórios</h2>
           {reports.map((r: any) => (
             <Card key={r.id}>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-base font-display flex items-center gap-2">
-                  <FileText className="w-4 h-4" />{r.companies?.name || "Unknown"}
+                  <FileText className="w-4 h-4" />{r.companies?.name || "Desconhecido"}
                 </CardTitle>
                 <Badge className={r.status === "completed" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}>
-                  {r.status === "completed" ? <><CheckCircle2 className="w-3 h-3 mr-1" />Completed</> : r.status}
+                  {r.status === "completed" ? <><CheckCircle2 className="w-3 h-3 mr-1" />Concluído</> : r.status === "pending" ? "Pendente" : r.status}
                 </Badge>
               </CardHeader>
               <CardContent className="space-y-3">
                 {r.ai_report && <p className="text-sm text-muted-foreground whitespace-pre-wrap">{r.ai_report}</p>}
                 {Array.isArray(r.risk_items) && r.risk_items.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">Risk Items:</p>
+                    <p className="text-sm font-medium">Itens de Risco:</p>
                     {r.risk_items.map((item: any, i: number) => (
                       <div key={i} className="flex items-start gap-2 text-sm">
                         <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${severityColor[item.severity] || "text-warning"}`} />
