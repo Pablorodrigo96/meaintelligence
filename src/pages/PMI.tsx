@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { ChevronDown, ChevronRight, Layers, Filter, CalendarIcon, Plus, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, Filter, CalendarIcon, Plus, Pencil, Trash2, Search, ChevronsUpDown, Download, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type ActivityStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -36,6 +37,7 @@ interface ActivityState {
   dbId?: string;
   responsible?: string;
   dueDate?: string | null;
+  notes?: string | null;
 }
 
 export default function PMI() {
@@ -48,6 +50,9 @@ export default function PMI() {
   const [expandedDisciplines, setExpandedDisciplines] = useState<Set<string>>(new Set());
   const [filterDeadline, setFilterDeadline] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterGroup, setFilterGroup] = useState<string>("all");
+  const [filterDiscipline, setFilterDiscipline] = useState<string>("all");
+  const [searchText, setSearchText] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingActivity, setEditingActivity] = useState<(ActivityFormData & { activityId: number; dbId?: string }) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ activityId: number; dbId?: string } | null>(null);
@@ -87,6 +92,7 @@ export default function PMI() {
           dbId: dbRow?.id,
           responsible: (dbRow as any)?.responsible || "",
           dueDate: (dbRow as any)?.due_date || null,
+          notes: (dbRow as any)?.notes || null,
         };
       });
       setActivities(mapped);
@@ -188,6 +194,22 @@ export default function PMI() {
     if (error) console.error("Error updating due_date:", error);
   }, []);
 
+  const updateNotes = useCallback(async (activityId: number, value: string) => {
+    const activity = activitiesRef.current.find((a) => a.id === activityId);
+    if (!activity?.dbId) return;
+
+    setActivities((prev) =>
+      prev.map((a) => (a.id === activityId ? { ...a, notes: value || null } : a))
+    );
+
+    const { error } = await supabase
+      .from("pmi_activities")
+      .update({ notes: value || null })
+      .eq("id", activity.dbId);
+
+    if (error) console.error("Error updating notes:", error);
+  }, []);
+
   const addActivity = async (data: ActivityFormData) => {
     if (!user) return;
     const { data: inserted, error } = await supabase
@@ -202,6 +224,7 @@ export default function PMI() {
         deadline: data.deadline,
         responsible: data.responsible || null,
         due_date: data.dueDate || null,
+        notes: data.notes || null,
         status: "pending",
       })
       .select()
@@ -229,6 +252,7 @@ export default function PMI() {
         deadline: data.deadline,
         responsible: data.responsible || null,
         due_date: data.dueDate || null,
+        notes: data.notes || null,
       })
       .eq("id", dbId);
 
@@ -279,6 +303,7 @@ export default function PMI() {
       deadline: item.deadline,
       responsible: state?.responsible || "",
       dueDate: state?.dueDate || null,
+      notes: state?.notes || "",
     });
     setDialogOpen(true);
   };
@@ -291,13 +316,26 @@ export default function PMI() {
     return activities.find((a) => a.id === id);
   };
 
+  const allDisciplines = useMemo(() => {
+    const set = new Set(pmiPlaybook.map((i) => i.discipline));
+    return Array.from(set).sort();
+  }, []);
+
   const filteredPlaybook = useMemo(() => {
+    const search = searchText.toLowerCase().trim();
     return pmiPlaybook.filter((item) => {
       if (filterDeadline !== "all" && item.deadline !== filterDeadline) return false;
       if (filterStatus !== "all" && getActivityStatus(item.id) !== filterStatus) return false;
+      if (filterGroup !== "all" && item.group !== filterGroup) return false;
+      if (filterDiscipline !== "all" && item.discipline !== filterDiscipline) return false;
+      if (search) {
+        const state = getActivityState(item.id);
+        const haystack = [item.activity, item.area, item.milestone, item.discipline, item.group, state?.responsible || ""].join(" ").toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
       return true;
     });
-  }, [filterDeadline, filterStatus, activities]);
+  }, [filterDeadline, filterStatus, filterGroup, filterDiscipline, searchText, activities]);
 
   const getGroupStats = (groupName: string) => {
     const groupItems = filteredPlaybook.filter((i) => i.group === groupName);
@@ -324,6 +362,7 @@ export default function PMI() {
         group: item.group,
         discipline: item.discipline,
         deadline: item.deadline,
+        activity: item.activity,
         status: (state?.status || "pending") as ActivityStatus,
         dueDate: state?.dueDate,
       };
@@ -346,9 +385,56 @@ export default function PMI() {
     });
   };
 
+  const expandAll = () => {
+    const groups = new Set(filteredPlaybook.map((i) => i.group));
+    setExpandedGroups(groups);
+    const disciplines = new Set(filteredPlaybook.map((i) => `${i.group}::${i.discipline}`));
+    setExpandedDisciplines(disciplines);
+  };
+
+  const collapseAll = () => {
+    setExpandedGroups(new Set());
+    setExpandedDisciplines(new Set());
+  };
+
+  const exportCSV = () => {
+    const today = new Date().toISOString().split("T")[0];
+    const headers = ["Grupo", "Disciplina", "Área/Tema", "Milestone", "Atividade", "Prazo", "Status", "Responsável", "Data Prazo", "Notas"];
+    const rows = filteredPlaybook.map((item) => {
+      const state = getActivityState(item.id);
+      return [
+        item.group,
+        item.discipline,
+        item.area,
+        item.milestone,
+        item.activity,
+        item.deadline,
+        getStatusLabel(state?.status || "pending"),
+        state?.responsible || "",
+        state?.dueDate || "",
+        state?.notes || "",
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",");
+    });
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pmi-playbook-${today}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "CSV exportado!", description: `${filteredPlaybook.length} atividades exportadas.` });
+  };
+
   const getDisciplines = (groupName: string) => {
     const disciplines = new Set(filteredPlaybook.filter((i) => i.group === groupName).map((i) => i.discipline));
     return Array.from(disciplines);
+  };
+
+  const isOverdue = (dueDate: string | null | undefined, status: string) => {
+    if (!dueDate || status === "completed") return false;
+    const today = new Date().toISOString().split("T")[0];
+    return dueDate < today;
   };
 
   if (loading) {
@@ -402,6 +488,17 @@ export default function PMI() {
               </span>
             </div>
 
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por atividade, área, milestone, disciplina ou responsável..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+
             {/* Filters */}
             <div className="flex items-center gap-3 flex-wrap">
               <Filter className="w-4 h-4 text-muted-foreground" />
@@ -427,7 +524,38 @@ export default function PMI() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="ml-auto">
+              <Select value={filterGroup} onValueChange={setFilterGroup}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Grupo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os grupos</SelectItem>
+                  {PMI_GROUPS.map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={filterDiscipline} onValueChange={setFilterDiscipline}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Disciplina" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as disciplinas</SelectItem>
+                  {allDisciplines.map((d) => (
+                    <SelectItem key={d} value={d}>{d}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="ml-auto flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={expandAll}>
+                  <ChevronsUpDown className="w-4 h-4 mr-1" /> Expandir
+                </Button>
+                <Button variant="outline" size="sm" onClick={collapseAll}>
+                  Recolher
+                </Button>
+                <Button variant="outline" size="sm" onClick={exportCSV}>
+                  <Download className="w-4 h-4 mr-1" /> CSV
+                </Button>
                 <Button size="sm" onClick={() => { setEditingActivity(null); setDialogOpen(true); }}>
                   <Plus className="w-4 h-4 mr-1" /> Nova Atividade
                 </Button>
@@ -502,12 +630,29 @@ export default function PMI() {
                                         const status = state?.status || "pending";
                                         const responsible = state?.responsible || "";
                                         const dueDate = state?.dueDate;
+                                        const overdue = isOverdue(dueDate, status);
 
                                         return (
-                                          <TableRow key={item.id}>
+                                          <TableRow key={item.id} className={cn(overdue && "bg-destructive/5")}>
                                             <TableCell className="text-xs">{item.area}</TableCell>
                                             <TableCell className="text-xs">{item.milestone}</TableCell>
-                                            <TableCell className="text-sm">{item.activity}</TableCell>
+                                            <TableCell className="text-sm">
+                                              <div className="flex items-start gap-1">
+                                                <span>{item.activity}</span>
+                                                {state?.notes && (
+                                                  <TooltipProvider>
+                                                    <Tooltip>
+                                                      <TooltipTrigger asChild>
+                                                        <span className="inline-block w-2 h-2 rounded-full bg-primary mt-1 shrink-0 cursor-help" />
+                                                      </TooltipTrigger>
+                                                      <TooltipContent side="top" className="max-w-xs">
+                                                        <p className="text-xs whitespace-pre-wrap">{state.notes}</p>
+                                                      </TooltipContent>
+                                                    </Tooltip>
+                                                  </TooltipProvider>
+                                                )}
+                                              </div>
+                                            </TableCell>
                                             <TableCell>
                                               <Input
                                                 className="h-7 text-xs"
@@ -527,9 +672,11 @@ export default function PMI() {
                                                     variant="outline"
                                                     className={cn(
                                                       "h-7 w-full justify-start text-left text-xs font-normal",
-                                                      !dueDate && "text-muted-foreground"
+                                                      !dueDate && "text-muted-foreground",
+                                                      overdue && "border-destructive text-destructive"
                                                     )}
                                                   >
+                                                    {overdue && <AlertCircle className="mr-1 h-3 w-3 text-destructive" />}
                                                     <CalendarIcon className="mr-1 h-3 w-3" />
                                                     {dueDate ? format(parseISO(dueDate), "dd/MM/yyyy") : "Selecionar"}
                                                   </Button>

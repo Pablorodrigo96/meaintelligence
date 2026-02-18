@@ -3,7 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { PMI_GROUPS, DEADLINE_ORDER, STATUS_OPTIONS, getStatusLabel } from "@/data/pmi-playbook";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
-import { CheckCircle2, Clock, AlertTriangle, ListChecks } from "lucide-react";
+import { CheckCircle2, Clock, AlertTriangle, ListChecks, CalendarClock } from "lucide-react";
+import { format, parseISO } from "date-fns";
+import { Badge } from "@/components/ui/badge";
 
 type ActivityStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -12,6 +14,7 @@ interface DashboardActivity {
   group: string;
   discipline: string;
   deadline: string;
+  activity: string;
   status: ActivityStatus;
   dueDate?: string | null;
 }
@@ -38,6 +41,18 @@ export default function PMIDashboard({ activities }: PMIDashboardProps) {
     ).length;
     const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
     return { total, completed, blocked, overdue, percent };
+  }, [activities]);
+
+  const upcomingActivities = useMemo(() => {
+    const today = new Date().toISOString().split("T")[0];
+    return activities
+      .filter((a) => a.dueDate && a.status !== "completed")
+      .sort((a, b) => (a.dueDate! > b.dueDate! ? 1 : -1))
+      .slice(0, 10)
+      .map((a) => ({
+        ...a,
+        isOverdue: a.dueDate! < today,
+      }));
   }, [activities]);
 
   const statusData = useMemo(() => {
@@ -106,6 +121,30 @@ export default function PMIDashboard({ activities }: PMIDashboardProps) {
           </Card>
         ))}
       </div>
+
+      {/* Upcoming / Overdue Activities Card */}
+      {upcomingActivities.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2 pb-3">
+            <CalendarClock className="h-5 w-5 text-primary" />
+            <CardTitle className="text-base">Próximas Atividades por Prazo</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y">
+              {upcomingActivities.map((a) => (
+                <div key={a.id} className={`flex items-center gap-3 px-6 py-2.5 text-sm ${a.isOverdue ? "bg-destructive/5" : ""}`}>
+                  <Badge variant={a.isOverdue ? "destructive" : "outline"} className="w-[90px] justify-center text-xs">
+                    {a.dueDate ? format(parseISO(a.dueDate), "dd/MM/yyyy") : ""}
+                  </Badge>
+                  <span className="flex-1 truncate">{a.activity}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[120px]">{a.discipline}</span>
+                  <Badge variant="secondary" className="text-xs">{getStatusLabel(a.status)}</Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
