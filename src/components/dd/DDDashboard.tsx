@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from "recharts";
-import { CheckCircle2, Clock, AlertTriangle, ListChecks } from "lucide-react";
+import { CheckCircle2, Clock, AlertTriangle, ListChecks, CalendarClock } from "lucide-react";
 import { DD_CATEGORIES, DD_STATUS_OPTIONS } from "@/data/dd-checklist-playbook";
 
 interface Props {
@@ -24,6 +24,14 @@ export default function DDDashboard({ checklistItems, documents, reports }: Prop
     const score = items.length > 0 ? Math.round((done / items.length) * 100) : 0;
     return { category: cat.label.split("/")[0], score, fullMark: 100 };
   });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const upcomingItems = checklistItems
+    .filter((i) => i.due_date && i.status !== "approved" && i.status !== "na")
+    .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+    .slice(0, 10);
 
   const timeline = [
     ...reports.map((r: any) => ({ type: "report", date: r.created_at, label: `Relatório gerado - ${r.companies?.name || ""}` })),
@@ -87,26 +95,54 @@ export default function DDDashboard({ checklistItems, documents, reports }: Prop
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="font-display text-base">Timeline Recente</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="font-display text-base flex items-center gap-2"><CalendarClock className="w-4 h-4" />Próximos Vencimentos</CardTitle></CardHeader>
           <CardContent>
-            {timeline.length > 0 ? (
-              <div className="space-y-3">
-                {timeline.map((t, i) => (
-                  <div key={i} className="flex items-start gap-3 text-sm">
-                    <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
-                    <div>
-                      <p className="text-foreground">{t.label}</p>
-                      <p className="text-xs text-muted-foreground">{new Date(t.date).toLocaleDateString("pt-BR")}</p>
+            {upcomingItems.length > 0 ? (
+              <div className="space-y-2">
+                {upcomingItems.map((item) => {
+                  const overdue = new Date(item.due_date) < today;
+                  const catLabel = DD_CATEGORIES.find((c) => c.key === item.category)?.label.split("/")[0] || item.category;
+                  return (
+                    <div key={item.id} className={`flex items-center gap-3 p-2 rounded-lg text-sm ${overdue ? "bg-destructive/5" : "bg-muted/30"}`}>
+                      {overdue && <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate font-medium">{item.item_name}</p>
+                        <p className="text-xs text-muted-foreground">{catLabel}</p>
+                      </div>
+                      <span className={`text-xs whitespace-nowrap ${overdue ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                        {new Date(item.due_date).toLocaleDateString("pt-BR")}
+                      </span>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-12">Nenhuma atividade registrada</p>
+              <p className="text-sm text-muted-foreground text-center py-12">Nenhum item com data limite pendente</p>
             )}
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader><CardTitle className="font-display text-base">Timeline Recente</CardTitle></CardHeader>
+        <CardContent>
+          {timeline.length > 0 ? (
+            <div className="space-y-3">
+              {timeline.map((t, i) => (
+                <div key={i} className="flex items-start gap-3 text-sm">
+                  <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
+                  <div>
+                    <p className="text-foreground">{t.label}</p>
+                    <p className="text-xs text-muted-foreground">{new Date(t.date).toLocaleDateString("pt-BR")}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-12">Nenhuma atividade registrada</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
