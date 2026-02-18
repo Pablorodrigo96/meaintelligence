@@ -14,12 +14,15 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { UserRole } from "@/types";
+import { useTheme } from "next-themes";
 
 const navItems = [
   { label: "Painel", icon: LayoutDashboard, path: "/dashboard" },
@@ -42,7 +45,12 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, roles, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const { theme, setTheme } = useTheme();
   const isAdmin = roles.includes("admin" as UserRole);
+
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  };
 
   return (
     <aside
@@ -122,6 +130,19 @@ export function AppSidebar() {
             {user.email}
           </div>
         )}
+        
+        <button
+          onClick={toggleTheme}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
+        >
+          {theme === "dark" ? (
+            <Sun className="w-5 h-5 shrink-0" />
+          ) : (
+            <Moon className="w-5 h-5 shrink-0" />
+          )}
+          {!collapsed && <span>{theme === "dark" ? "Modo Claro" : "Modo Escuro"}</span>}
+        </button>
+
         <button
           onClick={signOut}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
@@ -129,6 +150,7 @@ export function AppSidebar() {
           <LogOut className="w-5 h-5 shrink-0" />
           {!collapsed && <span>Sair</span>}
         </button>
+        
         <Button
           variant="ghost"
           size="icon"
