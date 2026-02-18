@@ -39,29 +39,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    const { data: { subscription } } = authService.onAuthStateChange(
-      async (_event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          setTimeout(() => fetchRoles(session.user.id), 0);
-        } else {
-          setRoles([]);
+    let mounted = true;
+
+    const initializeAuth = async () => {
+      try {
+        const currentSession = await authService.getSession();
+        if (mounted) {
+          setSession(currentSession);
+          setUser(currentSession?.user ?? null);
+          if (currentSession?.user) {
+            await fetchRoles(currentSession.user.id);
+          }
         }
-        setLoading(false);
+      } catch (error) {
+        console.error("Auth initialization error:", error);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    const { data: { subscription } } = authService.onAuthStateChange(
+      async (_event, currentSession) => {
+        if (mounted) {
+          setSession(currentSession);
+          setUser(currentSession?.user ?? null);
+          if (currentSession?.user) {
+            await fetchRoles(currentSession.user.id);
+          } else {
+            setRoles([]);
+          }
+          setLoading(false);
+        }
       }
     );
 
-    authService.getSession().then((session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchRoles(session.user.id);
-      }
-      setLoading(false);
-    });
+    initializeAuth();
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signOut = async () => {
