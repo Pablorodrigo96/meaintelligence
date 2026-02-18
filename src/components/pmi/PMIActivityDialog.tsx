@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,6 +21,7 @@ export interface ActivityFormData {
   deadline: string;
   responsible?: string;
   dueDate?: string | null;
+  notes?: string;
 }
 
 interface PMIActivityDialogProps {
@@ -39,13 +41,14 @@ export default function PMIActivityDialog({ open, onOpenChange, activity, onSave
     deadline: "D15",
     responsible: "",
     dueDate: null,
+    notes: "",
   });
 
   useEffect(() => {
     if (activity) {
-      setForm(activity);
+      setForm({ ...activity, notes: activity.notes || "" });
     } else {
-      setForm({ group: "", discipline: "", area: "", milestone: "", activity: "", deadline: "D15", responsible: "", dueDate: null });
+      setForm({ group: "", discipline: "", area: "", milestone: "", activity: "", deadline: "D15", responsible: "", dueDate: null, notes: "" });
     }
   }, [activity, open]);
 
@@ -128,6 +131,15 @@ export default function PMIActivityDialog({ open, onOpenChange, activity, onSave
                 </PopoverContent>
               </Popover>
             </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Notas / Comentários</Label>
+            <Textarea
+              value={form.notes || ""}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              placeholder="Registre decisões, pendências ou observações..."
+              rows={3}
+            />
           </div>
         </div>
         <DialogFooter>
