@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,12 @@ interface Props {
 export default function DDDataRoom({ documents, onUpload, onDelete, onAnalyze, uploading, analyzing }: Props) {
   const [category, setCategory] = useState("financeiro");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory] = useState("all");
+
+  const filteredDocs = useMemo(() => {
+    if (filterCategory === "all") return documents;
+    return documents.filter((d) => d.category === filterCategory);
+  }, [documents, filterCategory]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -65,10 +71,21 @@ export default function DDDataRoom({ documents, onUpload, onDelete, onAnalyze, u
 
       {documents.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="font-display text-base">Documentos ({documents.length})</CardTitle></CardHeader>
+          <CardHeader>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <CardTitle className="font-display text-base">Documentos ({filteredDocs.length})</CardTitle>
+              <Select value={filterCategory} onValueChange={setFilterCategory}>
+                <SelectTrigger className="w-[180px] h-9 text-xs"><SelectValue placeholder="Filtrar categoria" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas Categorias</SelectItem>
+                  {DD_CATEGORIES.map((c) => <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {documents.map((doc) => (
+              {filteredDocs.map((doc) => (
                 <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
                   <FileText className="w-5 h-5 text-primary shrink-0" />
                   <div className="flex-1 min-w-0">
