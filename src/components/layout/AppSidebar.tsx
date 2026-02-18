@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { UserRole } from "@/types";
 import { useTheme } from "next-themes";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -47,7 +46,7 @@ export function AppSidebar() {
   const { signOut, roles, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const { theme, setTheme } = useTheme();
-  const isAdmin = roles.includes("admin" as UserRole);
+  const isAdmin = roles.includes("admin" as any);
 
   const toggleTheme = () => {
     setTheme(theme === "dark" ? "light" : "dark");
