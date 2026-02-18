@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import { authService, roleService } from "@/services/api";
 
 type AppRole = "buyer" | "seller" | "advisor" | "admin";
 
@@ -29,17 +29,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchRoles = async (userId: string) => {
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (data) {
-      setRoles(data.map((r) => r.role as AppRole));
+    try {
+      const userRoles = await roleService.getUserRoles(userId);
+      setRoles(userRoles as AppRole[]);
+    } catch (error) {
+      console.error("Error fetching roles:", error);
+      setRoles([]);
     }
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    const { data: { subscription } } = authService.onAuthStateChange(
       async (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
@@ -52,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    authService.getSession().then((session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await authService.signOut();
   };
 
   return (
