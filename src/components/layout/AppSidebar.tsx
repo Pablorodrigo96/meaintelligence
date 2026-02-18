@@ -22,7 +22,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "next-themes";
-import { motion, AnimatePresence } from "framer-motion";
 
 const navItems = [
   { label: "Painel", icon: LayoutDashboard, path: "/dashboard" },
@@ -64,19 +63,11 @@ export function AppSidebar() {
         <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground font-display font-bold text-sm shrink-0">
           M&A
         </div>
-        <AnimatePresence initial={false}>
-          {!collapsed && (
-            <motion.span
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.2 }}
-              className="font-display font-semibold text-sidebar-accent-foreground truncate whitespace-nowrap"
-            >
-              M&A Intelligence
-            </motion.span>
-          )}
-        </AnimatePresence>
+        {!collapsed && (
+          <span className="font-display font-semibold text-sidebar-accent-foreground truncate whitespace-nowrap transition-opacity duration-200">
+            M&A Intelligence
+          </span>
+        )}
       </div>
 
       {/* Navigation */}
@@ -95,19 +86,9 @@ export function AppSidebar() {
               )}
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              <AnimatePresence initial={false}>
-                {!collapsed && (
-                  <motion.span
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: "auto" }}
-                    exit={{ opacity: 0, width: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="truncate whitespace-nowrap"
-                  >
-                    {item.label}
-                  </motion.span>
-                )}
-              </AnimatePresence>
+              {!collapsed && (
+                <span className="truncate whitespace-nowrap">{item.label}</span>
+              )}
             </Link>
           );
         })}
@@ -115,18 +96,11 @@ export function AppSidebar() {
         {isAdmin && (
           <>
             <div className="pt-4 pb-2 px-3 h-8">
-              <AnimatePresence initial={false}>
-                {!collapsed && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50 block"
-                  >
-                    Admin
-                  </motion.span>
-                )}
-              </AnimatePresence>
+              {!collapsed && (
+                <span className="text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50 block">
+                  Admin
+                </span>
+              )}
             </div>
             {adminItems.map((item) => {
               const isActive = location.pathname === item.path;
@@ -142,19 +116,9 @@ export function AppSidebar() {
                   )}
                 >
                   <item.icon className="w-5 h-5 shrink-0" />
-                  <AnimatePresence initial={false}>
-                    {!collapsed && (
-                      <motion.span
-                        initial={{ opacity: 0, width: 0 }}
-                        animate={{ opacity: 1, width: "auto" }}
-                        exit={{ opacity: 0, width: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="truncate whitespace-nowrap"
-                      >
-                        {item.label}
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
+                  {!collapsed && (
+                    <span className="truncate whitespace-nowrap">{item.label}</span>
+                  )}
                 </Link>
               );
             })}
@@ -164,18 +128,11 @@ export function AppSidebar() {
 
       {/* Footer */}
       <div className="border-t border-sidebar-border p-2 space-y-1 overflow-hidden">
-        <AnimatePresence initial={false}>
-          {!collapsed && user && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="px-3 py-2 text-xs text-sidebar-foreground/60 truncate whitespace-nowrap"
-            >
-              {user.email}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {!collapsed && user && (
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 truncate whitespace-nowrap">
+            {user.email}
+          </div>
+        )}
         
         <button
           onClick={toggleTheme}
@@ -187,18 +144,11 @@ export function AppSidebar() {
           ) : (
             <Moon className="w-5 h-5 shrink-0" />
           )}
-          <AnimatePresence initial={false}>
-            {!collapsed && (
-              <motion.span
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                className="whitespace-nowrap"
-              >
-                {theme === "dark" ? "Modo Claro" : "Modo Escuro"}
-              </motion.span>
-            )}
-          </AnimatePresence>
+          {!collapsed && (
+            <span className="whitespace-nowrap">
+              {theme === "dark" ? "Modo Claro" : "Modo Escuro"}
+            </span>
+          )}
         </button>
 
         <button
@@ -206,18 +156,7 @@ export function AppSidebar() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
         >
           <LogOut className="w-5 h-5 shrink-0" />
-          <AnimatePresence initial={false}>
-            {!collapsed && (
-              <motion.span
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                className="whitespace-nowrap"
-              >
-                Sair
-              </motion.span>
-            )}
-          </AnimatePresence>
+          {!collapsed && <span className="whitespace-nowrap">Sair</span>}
         </button>
         
         <Button
