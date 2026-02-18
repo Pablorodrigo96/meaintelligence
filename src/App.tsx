@@ -5,21 +5,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { RoleProtectedRoute } from "@/components/RoleProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
-
-import Auth from "@/pages/Auth";
-import Dashboard from "@/pages/Dashboard";
-import Companies from "@/pages/Companies";
-import Matching from "@/pages/Matching";
-import DueDiligence from "@/pages/DueDiligence";
-import Valuation from "@/pages/Valuation";
-import Strategy from "@/pages/Strategy";
-import Contracts from "@/pages/Contracts";
-import Risk from "@/pages/Risk";
-import PMI from "@/pages/PMI";
-import AdminUsers from "@/pages/AdminUsers";
-import NotFound from "@/pages/NotFound";
+import Auth from "./pages/Auth";
+import Dashboard from "./pages/Dashboard";
+import Companies from "./pages/Companies";
+import Matching from "./pages/Matching";
+import DueDiligence from "./pages/DueDiligence";
+import Valuation from "./pages/Valuation";
+import Strategy from "./pages/Strategy";
+import Contracts from "./pages/Contracts";
+import Risk from "./pages/Risk";
+import PMI from "./pages/PMI";
+import AdminUsers from "./pages/AdminUsers";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -49,14 +47,7 @@ const App = () => (
               <Route path="/contracts" element={<Contracts />} />
               <Route path="/pmi" element={<PMI />} />
               <Route path="/risk" element={<Risk />} />
-              <Route
-                path="/admin/users"
-                element={
-                  <RoleProtectedRoute requiredRole="admin">
-                    <AdminUsers />
-                  </RoleProtectedRoute>
-                }
-              />
+              <Route path="/admin/users" element={<AdminUsers />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

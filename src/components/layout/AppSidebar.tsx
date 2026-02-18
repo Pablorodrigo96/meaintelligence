@@ -14,14 +14,11 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Sun,
-  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useTheme } from "next-themes";
 
 const navItems = [
   { label: "Painel", icon: LayoutDashboard, path: "/dashboard" },
@@ -44,12 +41,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, roles, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
-  const { theme, setTheme } = useTheme();
-  const isAdmin = roles.includes("admin" as any);
-
-  const toggleTheme = () => {
-    setTheme(theme === "dark" ? "light" : "dark");
-  };
+  const isAdmin = roles.includes("admin");
 
   return (
     <aside
@@ -59,19 +51,19 @@ export function AppSidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-sidebar-border overflow-hidden">
+      <div className="flex items-center gap-3 px-4 h-16 border-b border-sidebar-border">
         <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground font-display font-bold text-sm shrink-0">
           M&A
         </div>
         {!collapsed && (
-          <span className="font-display font-semibold text-sidebar-accent-foreground truncate whitespace-nowrap transition-opacity duration-200">
+          <span className="font-display font-semibold text-sidebar-accent-foreground truncate">
             M&A Intelligence
           </span>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1 overflow-x-hidden">
+      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           return (
@@ -86,18 +78,16 @@ export function AppSidebar() {
               )}
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && (
-                <span className="truncate whitespace-nowrap">{item.label}</span>
-              )}
+              {!collapsed && <span className="truncate">{item.label}</span>}
             </Link>
           );
         })}
 
         {isAdmin && (
           <>
-            <div className="pt-4 pb-2 px-3 h-8">
+            <div className="pt-4 pb-2 px-3">
               {!collapsed && (
-                <span className="text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50 block">
+                <span className="text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50">
                   Admin
                 </span>
               )}
@@ -116,9 +106,7 @@ export function AppSidebar() {
                   )}
                 >
                   <item.icon className="w-5 h-5 shrink-0" />
-                  {!collapsed && (
-                    <span className="truncate whitespace-nowrap">{item.label}</span>
-                  )}
+                  {!collapsed && <span className="truncate">{item.label}</span>}
                 </Link>
               );
             })}
@@ -127,38 +115,19 @@ export function AppSidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-sidebar-border p-2 space-y-1 overflow-hidden">
+      <div className="border-t border-sidebar-border p-2 space-y-1">
         {!collapsed && user && (
-          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 truncate whitespace-nowrap">
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 truncate">
             {user.email}
           </div>
         )}
-        
-        <button
-          onClick={toggleTheme}
-          aria-label="Alternar tema"
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
-        >
-          {theme === "dark" ? (
-            <Sun className="w-5 h-5 shrink-0" />
-          ) : (
-            <Moon className="w-5 h-5 shrink-0" />
-          )}
-          {!collapsed && (
-            <span className="whitespace-nowrap">
-              {theme === "dark" ? "Modo Claro" : "Modo Escuro"}
-            </span>
-          )}
-        </button>
-
         <button
           onClick={signOut}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
         >
           <LogOut className="w-5 h-5 shrink-0" />
-          {!collapsed && <span className="whitespace-nowrap">Sair</span>}
+          {!collapsed && <span>Sair</span>}
         </button>
-        
         <Button
           variant="ghost"
           size="icon"
