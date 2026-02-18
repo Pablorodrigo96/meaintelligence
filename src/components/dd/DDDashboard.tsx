@@ -5,10 +5,35 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 import { CheckCircle2, Clock, AlertTriangle, ListChecks, CalendarClock } from "lucide-react";
 import { DD_CATEGORIES, DD_STATUS_OPTIONS } from "@/data/dd-checklist-playbook";
 
+export interface ChecklistItem {
+  id: string;
+  item_name: string;
+  category: string;
+  status: "pending" | "approved" | "na" | "alert" | string;
+  severity?: "normal" | "medium" | "critical";
+  due_date?: string;
+}
+
+export interface Document {
+  id: string;
+  file_name: string;
+  created_at: string;
+  [key: string]: any;
+}
+
+export interface Report {
+  id: string;
+  created_at: string;
+  companies?: {
+    name: string;
+  };
+  [key: string]: any;
+}
+
 interface Props {
-  checklistItems: any[];
-  documents: any[];
-  reports: any[];
+  checklistItems: ChecklistItem[];
+  documents: Document[];
+  reports: Report[];
 }
 
 export default function DDDashboard({ checklistItems, documents, reports }: Props) {
@@ -30,12 +55,12 @@ export default function DDDashboard({ checklistItems, documents, reports }: Prop
 
   const upcomingItems = checklistItems
     .filter((i) => i.due_date && i.status !== "approved" && i.status !== "na")
-    .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+    .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
     .slice(0, 10);
 
   const timeline = [
-    ...reports.map((r: any) => ({ type: "report", date: r.created_at, label: `Relatório gerado - ${r.companies?.name || ""}` })),
-    ...documents.map((d: any) => ({ type: "document", date: d.created_at, label: `Documento: ${d.file_name}` })),
+    ...reports.map((r) => ({ type: "report", date: r.created_at, label: `Relatório gerado - ${r.companies?.name || ""}` })),
+    ...documents.map((d) => ({ type: "document", date: d.created_at, label: `Documento: ${d.file_name}` })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
 
   return (
@@ -100,7 +125,7 @@ export default function DDDashboard({ checklistItems, documents, reports }: Prop
             {upcomingItems.length > 0 ? (
               <div className="space-y-2">
                 {upcomingItems.map((item) => {
-                  const overdue = new Date(item.due_date) < today;
+                  const overdue = item.due_date ? new Date(item.due_date) < today : false;
                   const catLabel = DD_CATEGORIES.find((c) => c.key === item.category)?.label.split("/")[0] || item.category;
                   return (
                     <div key={item.id} className={`flex items-center gap-3 p-2 rounded-lg text-sm ${overdue ? "bg-destructive/5" : "bg-muted/30"}`}>
@@ -110,7 +135,7 @@ export default function DDDashboard({ checklistItems, documents, reports }: Prop
                         <p className="text-xs text-muted-foreground">{catLabel}</p>
                       </div>
                       <span className={`text-xs whitespace-nowrap ${overdue ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                        {new Date(item.due_date).toLocaleDateString("pt-BR")}
+                        {item.due_date ? new Date(item.due_date).toLocaleDateString("pt-BR") : ""}
                       </span>
                     </div>
                   );
