@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { UserRole } from "@/types";
 
 const navItems = [
   { label: "Painel", icon: LayoutDashboard, path: "/dashboard" },
@@ -41,7 +42,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, roles, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
-  const isAdmin = roles.includes("admin");
+  const isAdmin = roles.includes("admin" as UserRole);
 
   return (
     <aside
