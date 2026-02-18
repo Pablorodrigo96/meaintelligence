@@ -3,10 +3,10 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
-import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { RoleProtectedRoute } from "@/components/RoleProtectedRoute";
-import { AppLayout } from "@/components/layout/AppLayout";
+import { AuthProvider } from "@/features/auth/contexts/AuthContext";
+import { ProtectedRoute } from "@/features/auth/components/ProtectedRoute";
+import { RoleProtectedRoute } from "@/features/auth/components/RoleProtectedRoute";
+import { AppLayout } from "@/features/shared/components/layout/AppLayout";
 
 import Auth from "@/features/auth/pages/Auth";
 import Dashboard from "@/features/dashboard/pages/Dashboard";
@@ -19,7 +19,7 @@ import Contracts from "@/features/legal/pages/Contracts";
 import Risk from "@/features/risk/pages/Risk";
 import PMI from "@/features/pmi/pages/PMI";
 import AdminUsers from "@/features/admin/pages/AdminUsers";
-import NotFound from "@/pages/NotFound";
+import NotFound from "@/features/shared/pages/NotFound";
 
 const queryClient = new QueryClient();
 
