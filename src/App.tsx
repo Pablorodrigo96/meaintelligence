@@ -7,18 +7,19 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RoleProtectedRoute } from "@/components/RoleProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
-import Auth from "./pages/Auth";
-import Dashboard from "./pages/Dashboard";
-import Companies from "./pages/Companies";
-import Matching from "./pages/Matching";
-import DueDiligence from "./pages/DueDiligence";
-import Valuation from "./pages/Valuation";
-import Strategy from "./pages/Strategy";
-import Contracts from "./pages/Contracts";
-import Risk from "./pages/Risk";
-import PMI from "./pages/PMI";
-import AdminUsers from "./pages/AdminUsers";
-import NotFound from "./pages/NotFound";
+
+import Auth from "@/features/auth/pages/Auth";
+import Dashboard from "@/features/dashboard/pages/Dashboard";
+import Companies from "@/features/crm/pages/Companies";
+import Matching from "@/features/matching/pages/Matching";
+import DueDiligence from "@/features/due-diligence/pages/DueDiligence";
+import Valuation from "@/features/valuation/pages/Valuation";
+import Strategy from "@/features/strategy/pages/Strategy";
+import Contracts from "@/features/legal/pages/Contracts";
+import Risk from "@/features/risk/pages/Risk";
+import PMI from "@/features/pmi/pages/PMI";
+import AdminUsers from "@/features/admin/pages/AdminUsers";
+import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
 
