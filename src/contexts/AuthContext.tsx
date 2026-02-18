@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
-import { authService, roleService } from "@/services/api";
+import { supabase } from "@/integrations/supabase/client";
 
 type AppRole = "buyer" | "seller" | "advisor" | "admin";
 
@@ -30,8 +30,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchRoles = async (userId: string) => {
     try {
-      const userRoles = await roleService.getUserRoles(userId);
-      setRoles(userRoles as AppRole[]);
+      const { data, error } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+      if (error) throw error;
+      setRoles((data || []).map((r) => r.role as AppRole));
     } catch (error) {
       console.error("Error fetching roles:", error);
       setRoles([]);
@@ -43,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const initializeAuth = async () => {
       try {
-        const currentSession = await authService.getSession();
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
         if (mounted) {
           setSession(currentSession);
           setUser(currentSession?.user ?? null);
@@ -60,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    const { data: { subscription } } = authService.onAuthStateChange(
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, currentSession) => {
         if (mounted) {
           setSession(currentSession);
@@ -84,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
-    await authService.signOut();
+    await supabase.auth.signOut();
   };
 
   return (
