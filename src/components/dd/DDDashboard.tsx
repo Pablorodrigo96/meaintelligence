@@ -12,22 +12,29 @@ export interface ChecklistItem {
   status: "pending" | "approved" | "na" | "alert" | string;
   severity?: "normal" | "medium" | "critical";
   due_date?: string;
+  description?: string;
+  observation?: string;
 }
 
 export interface Document {
   id: string;
   file_name: string;
+  file_url: string;
+  file_type: string;
   created_at: string;
-  [key: string]: any;
+  updated_at?: string;
+  company_id?: string;
 }
 
 export interface Report {
   id: string;
   created_at: string;
+  updated_at?: string;
+  status?: string;
   companies?: {
     name: string;
   };
-  [key: string]: any;
+  summary?: string;
 }
 
 interface Props {
