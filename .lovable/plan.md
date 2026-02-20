@@ -1,38 +1,38 @@
 
-## Problema
+## Finalizar a Integração do Mapeamento Completo de Municípios
 
-O campo `municipio` na tabela `estabelecimentos` do banco externo usa o código numérico próprio da Receita Federal (ex: `6547`, `7181`, `4123`), que é diferente do código IBGE. O banco externo não possui tabela de municípios, e o mapeamento atual (`RF_MUNICIPIO_MAP`) só cobre ~20 cidades principais. Cidades menores aparecem como código numérico bruto na interface.
+### Estado Atual
 
-## Solução: Mapeamento Completo Embutido no Edge Function
+O arquivo `rf-municipios.ts` já foi criado com os ~5.570 municípios e o `import { RF_MUNICIPIOS }` já está no topo do `index.ts`. Porém, o `index.ts` ainda tem código legado que precisa ser removido:
 
-A abordagem mais robusta é incorporar o mapeamento completo dos ~5570 municípios diretamente no código do Edge Function como um objeto estático. Isso elimina qualquer dependência de tabelas externas, zero latência adicional de consulta e resolução 100% dos códigos.
+- **Linhas 62-77**: Objeto `RF_MUNICIPIO_MAP` antigo com apenas ~20 cidades (com bug de chave duplicada `"6001"`)
+- **Linhas 142-160**: Bloco `try/catch` que faz 2 queries extras ao banco externo verificando se existe tabela `municipios`
+- **Linha 143**: `let municipioMap = { ...RF_MUNICIPIO_MAP }` — variável que usa o mapa antigo
+- **Linha 195**: `municipioMap[municipioCod]` — lookup usando a variável antiga
 
-Os códigos da Receita Federal são disponibilizados publicamente no arquivo de layout dos dados abertos do CNPJ (`municipios.json`/`municipios.csv`) e seguem uma numeração sequencial de 4 dígitos.
+### Alterações no `supabase/functions/national-search/index.ts`
 
-## O que será alterado
+1. **Remover** o objeto `RF_MUNICIPIO_MAP` (linhas 62-77)
 
-### `supabase/functions/national-search/index.ts`
+2. **Remover** o bloco de checagem da tabela `municipios` (linhas 142-160), eliminando 2 queries extras por chamada
 
-1. **Remover** o `RF_MUNICIPIO_MAP` parcial atual (que tinha apenas ~20 cidades e até uma duplicata — `"6001"` aparecia duas vezes, mapeando para Porto Alegre e Rio de Janeiro).
-
-2. **Adicionar** o objeto `RF_MUNICIPIOS` completo com todos os ~5570 municípios brasileiros no formato `"codigo": "Nome do Município"`. Os códigos da RF vão de 1 dígito a 4 dígitos (ex: `"0001"` a `"9999"`), derivados do arquivo público da Receita Federal.
-
-3. **Remover** a lógica de checagem da tabela `municipios` no banco externo (bloco `try/catch` com `queryObject` para `information_schema.tables`) — essa consulta extra adicionava latência e já sabemos que a tabela não existe.
-
-4. **Simplificar** a função de resolução de município:
+3. **Simplificar** o lookup do município na linha 195:
    ```typescript
-   // Antes: consulta ao banco + fallback para mapa parcial
-   // Depois: lookup direto no mapa completo
+   // Antes
+   let municipioMap: Record<string, string> = { ...RF_MUNICIPIO_MAP };
+   // ... bloco try/catch com queries extras ...
+   const cityName = municipioMap[municipioCod] || municipioCod;
+
+   // Depois (direto, sem variável intermediária)
    const cityName = RF_MUNICIPIOS[municipioCod] || municipioCod;
    ```
 
-## Impacto
+### Após as Alterações: Teste Direto
 
-- Todos os resultados do matching Base Nacional passam a exibir o nome correto da cidade
-- Latência da edge function reduzida (eliminamos 2 queries extras ao banco externo por chamada)
-- Zero dependência de tabela externa para resolução de municípios
-- Correção do bug de duplicata na chave `"6001"` (Porto Alegre vs Rio de Janeiro)
+Após o deploy automático, será chamada a edge function `national-search` com `target_state: "SP"` para verificar que os municípios retornam com nomes corretos (ex: "Campinas", "Ribeirão Preto", "Santos") ao invés de códigos numéricos brutos.
 
-## Técnico: Fonte dos Dados
+### Impacto
 
-O mapeamento completo será baseado no arquivo oficial `municipios.json` disponibilizado pela Receita Federal junto com os dados públicos do CNPJ, contendo os 5570 municípios com seus respectivos códigos RF de 4 dígitos.
+- 100% dos ~5.570 municípios brasileiros resolvidos corretamente
+- Latência reduzida: eliminamos 2 queries SQL extras ao banco externo por chamada
+- Correção do bug de duplicata na chave `"6001"` (era mapeada para "Porto Alegre" e depois sobrescrita por "Rio de Janeiro" no mesmo objeto)
