@@ -1,229 +1,224 @@
 
-## Análise das Propostas e Plano de Implementação
+## Reestruturação do Matching: IA Apenas para Enriquecimento Individual
 
-### Avaliação honesta ponto a ponto
+### Diagnóstico do Problema de Custo
 
-**A. Pré-score determinístico é "cego" — CORRETO, mas a solução importa**
+Hoje a IA é chamada em **3 momentos** a cada busca, sendo 2 deles desnecessários e caros:
 
-O diagnóstico é preciso. O `pre_score` atual no `ai-analyze/index.ts` (linhas 28-41) usa 5 regras binárias: setor exato (+40), porte exato (+20), estado exato (+20), tem capital (+10), CNPJ válido (+10). Com threshold em 30, uma empresa com setor diferente mas capital e CNPJ válidos pontuaria apenas 20 — **descartada mesmo sendo boa candidata**. O problema de adjacência setorial é real: uma empresa de BPO financeiro tem CNAE 82xx (mapeia para "Other"), mas é altamente complementar a uma consultoria financeira (69xx/70xx).
+**Chamada 1 — `parse-intent` (LLM para extrair CNAE do texto):**
+Usa um LLM completo apenas para mapear texto como "consultoria financeira" → CNAE prefixes `["69", "70"]`. Esse mapeamento é 100% determinístico e pode ser feito com um simples lookup de palavras-chave em código.
 
-**B. LLM como ranker primário — CORRETO, mas a solução neural é cara demais para o estágio atual**
+**Chamada 2 — `type: "match"` com 25 empresas (o maior custo):**
+O `ai-analyze` recebe 25 empresas completas com todos os dados e pede ao LLM que gere, para cada uma: `analysis`, `dimensions` (5 scores), `dimension_explanations` (5 textos), `strengths` (2-3 itens), `weaknesses` (2-3 itens), `recommendation`. Isso representa centenas de tokens de OUTPUT por empresa × 25 empresas = payload massivo a cada busca. Toda essa pontuação pode ser feita deterministicamente.
 
-A proposta de Two-Tower ou Cross-Encoder pressupõe dados de treinamento supervisionados que **não existem ainda** (sem histórico de `contacted`, `nda_signed`, etc.). Treinar um modelo sem labels é treinar para overfitar no ruído. A solução imediata mais efetiva é **embeddings de texto sem supervisão** (ponto 9 da proposta), que não requer treino e já resolve adjacência setorial.
-
-**C. Financial_fit sempre penalizado — CORRETO e corrigível imediatamente**
-
-A linha 57 do `ai-analyze/index.ts` instrui a IA: "reduce financial_fit by 20 points" para toda empresa sem receita/EBITDA. Na Base Nacional, 100% das empresas não têm EBITDA. Isso distorce o score final sistematicamente. A correção de `confidence-aware scoring` (reduzir o peso do financial_fit, não o valor) é correta e implementável hoje.
-
-**Sobre a Camada Neural (Two-Tower, Cross-Encoder, GNN):**
-
-Concordo com a lógica, mas o sequenciamento importa:
-- Two-Tower e Cross-Encoder requerem dataset de treinamento com labels de qualidade
-- Sem logs de `contacted/qualified/rejected`, qualquer modelo neural vai aprender padrões espúrios
-- O ponto 9 (embeddings sem supervisão por similaridade de texto) é o caminho correto agora
-- **O que precisa ser instrumentado AGORA** são os eventos de feedback para viabilizar o modelo neural no futuro
+**Chamada 3 — `company-deep-dive` quando o usuário clica em "Aprofundar":**
+IA enriquece UMA empresa específica com dados da BrasilAPI. Este é o **uso legítimo** — IA a pedido, sobre dado específico, gerando valor real.
 
 ---
 
-### O que implementar agora (por impacto/esforço)
-
-**Prioridade 1 — Correto hoje, alto impacto imediato:**
-
-1. **Confidence-aware scoring**: Remover a penalidade fixa de -20 no financial_fit, substituir por redução de peso proporcional ao `confidence_score` do deep-dive quando disponível. Empresas sem dados financeiros recebem `financial_fit` neutro (50) e o peso da dimensão é reduzido automaticamente no cálculo final.
-
-2. **Pré-score com adjacência setorial**: Substituir as 5 regras binárias por um sistema de pontuação com adjacência. Em vez de `sector === target_sector` para +40, usar uma matriz de adjacência que pontua setores complementares com +20 (ex: Finance:Consulting adjacente a Finance:Accounting, BPO, Legal).
-
-3. **Instrumentação de eventos de feedback no banco**: Registrar eventos de usuário na tabela `matches` (já existe) adicionando campos `user_action` e `action_timestamp` — ou criar uma tabela `match_feedback` simples. Isso é o investimento para o modelo neural futuro.
-
-**Prioridade 2 — Embeddings sem supervisão (melhora ranking sem treino):**
-
-4. **Ranker por similaridade de texto**: No `ai-analyze`, antes da IA, gerar um score de similaridade textual entre o perfil do comprador (setor + porte + notas) e a descrição de cada candidato (CNAE + porte + capital + localização). Usar a API de embeddings do gateway Lovable AI (modelo `text-embedding`) para calcular cosine similarity. Ordenar os top 25 por esse score antes de enviar para o LLM.
-
-**Prioridade 3 — Infraestrutura de feedback (viabiliza o futuro neural):**
-
-5. **Tabela `match_feedback`**: Criar tabela para registrar ações do usuário (clicou, salvou, ignorou, contatou, rejeitou com motivo) com `buyer_id`, `company_id`, `action_type`, `rank_position`, `criteria_snapshot`. Adicionar botões no card de resultado (`Salvar na shortlist`, `Ignorar`, `Marcar como contatado`).
-
----
-
-### Arquitetura final do pipeline após as mudanças
+### A Nova Arquitetura: 100% Determinístico → IA Sob Demanda
 
 ```text
-[NL Input] → parse-intent (LLM rápido) → cnae_prefixes + capital_range
-                    ↓
-[Layer 1 - DB Filter]
-national-search: CNAE exato + capital range + UF
-→ retorna 80 candidatos
+ANTES (3 chamadas de IA por busca):
+NL Text → [LLM parse-intent] → filtros
+                                  ↓
+national-search → 80 empresas → [LLM 25 empresas] → scores + análises
+                                                         ↓
+                                              Usuário clica → [LLM deep-dive]
 
-                    ↓
-[Layer 2A - Hard Filters]
-CNPJ válido + ativo + capital dentro da faixa
-→ elimina inválidos
-
-                    ↓
-[Layer 2B - Pré-score com Adjacência]
-Novo: matriz de adjacência setorial (adjacent = +20, complementar = +15)
-Novo: embedding similarity score (cosine entre buyer profile e company text)
-→ top 25 por score composto (pré-score + embedding similarity)
-
-                    ↓
-[Layer 3 - LLM explicador]
-Recebe top 25 com rank_score e confidence
-Gera: análise qualitativa + next steps (NÃO é ranker primário)
-Novo: financial_fit com peso dinâmico baseado em confidence
-→ retorna 25 matches com score final + explicações
-
-                    ↓
-[Feedback Loop] ← botões de ação no card de resultado
-match_feedback: clicked / saved / ignored / contacted / rejected
-→ dataset para futuro Two-Tower / Cross-Encoder
+DEPOIS (0 chamadas de IA na busca, 1 sob demanda):
+NL Text → [lookup determinístico] → filtros
+                                  ↓
+national-search → 80 empresas → [pré-score determinístico] → top 15 exibidos
+                                                         ↓
+                                 Usuário clica "Ver análise IA" → [LLM deep-dive]
 ```
 
 ---
 
-### Detalhamento técnico das alterações
+### Mudanças Concretas por Arquivo
 
-**1. Nova tabela `match_feedback` (migration)**
+---
 
-```sql
-CREATE TABLE match_feedback (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL,
-  match_id uuid REFERENCES matches(id) ON DELETE CASCADE,
-  company_id uuid NOT NULL,
-  action_type text NOT NULL, -- 'clicked','saved','ignored','contacted','rejected','meeting','nda','dd_started'
-  rank_position integer,
-  rejection_reason text,
-  criteria_snapshot jsonb,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+**1. `src/pages/Matching.tsx` — Substituir `parse-intent` por lookup local**
 
-ALTER TABLE match_feedback ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can manage own feedback"
-  ON match_feedback FOR ALL
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-```
-
-**2. `supabase/functions/ai-analyze/index.ts` — case "match"**
-
-Substituir o bloco de pré-score atual (linhas 26-41) por:
+A função `parseIntent()` (linha 638) hoje chama `ai-analyze` via Supabase. Será substituída por uma função local em TypeScript que faz lookup de palavras-chave:
 
 ```typescript
-// Matriz de adjacência setorial — evita descartar candidatos complementares
-const SECTOR_ADJACENCY: Record<string, string[]> = {
-  "Finance": ["Technology", "Real Estate", "Other"],
-  "Technology": ["Finance", "Telecom", "Education"],
-  "Healthcare": ["Technology", "Education", "Other"],
-  "Manufacturing": ["Logistics", "Energy", "Retail"],
-  "Retail": ["Logistics", "Manufacturing", "Other"],
-  "Logistics": ["Manufacturing", "Retail", "Agribusiness"],
-  "Real Estate": ["Finance", "Construction", "Other"],
-  "Agribusiness": ["Logistics", "Manufacturing", "Energy"],
-  "Education": ["Technology", "Healthcare", "Other"],
-  "Energy": ["Manufacturing", "Agribusiness", "Other"],
-  "Telecom": ["Technology", "Finance", "Other"],
-  "Other": [],
-};
-
-// Novo pré-score com adjacência
-const preScored = allCompanies.map((c: any) => {
-  let score = 0;
-  
-  // Setor: exato (+40), adjacente (+20), complementar por CNAE prefix (+15)
-  if (criteria.target_sector) {
-    if (c.sector === criteria.target_sector) score += 40;
-    else if (SECTOR_ADJACENCY[criteria.target_sector]?.includes(c.sector)) score += 20;
-    // Bonus: se o CNAE prefix da empresa está nos cnae_prefixes do buyer (via parse-intent)
-    const buyerCnaePrefixes: string[] = criteria.cnae_prefixes || [];
-    if (buyerCnaePrefixes.length > 0) {
-      const companyCnae = c.cnae_fiscal_principal || c.description?.match(/CNAE: (\d+)/)?.[1] || "";
-      if (buyerCnaePrefixes.some(p => companyCnae.startsWith(p))) score += 15;
-    }
-  }
-  
-  // Porte: exato (+20), adjacente (+10)
-  const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
-  const targetIdx = sizeOrder.indexOf(criteria.target_size || "");
-  const companyIdx = sizeOrder.indexOf(c.size || "");
-  if (criteria.target_size) {
-    if (c.size === criteria.target_size) score += 20;
-    else if (Math.abs(targetIdx - companyIdx) === 1) score += 10;
-  }
-  
-  // Estado (+20)
-  if (criteria.target_state && c.state === criteria.target_state) score += 20;
-  
-  // Dados disponíveis (+10)
-  if (c.revenue || c.capital_social) score += 10;
-  
-  // CNPJ válido (+10)
-  if (c.cnpj && String(c.cnpj).replace(/\D/g, "").length >= 14) score += 10;
-  
-  return { ...c, pre_score: score };
+// ANTES: chamada de IA
+const { data } = await supabase.functions.invoke("ai-analyze", {
+  body: { type: "parse-intent", data: { text: nlText } },
 });
 
-// Threshold reduzido: de 30 para 20 (menos agressivo no descarte)
-// Mais empresas passam mas ordenadas melhor
-const preFiltered = preScored
-  .filter((c: any) => c.pre_score >= 20)
-  .sort((a: any, b: any) => b.pre_score - a.pre_score)
-  .slice(0, 25);
+// DEPOIS: lookup local, zero custo, zero latência
+function parseIntentLocal(text: string): ParsedIntent {
+  const lower = text.toLowerCase();
+  
+  const KEYWORD_MAP = [
+    { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro"],
+      cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
+    { keywords: ["banco", "financeira", "crédito", "empréstimo"],
+      cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking" },
+    { keywords: ["seguro", "previdência", "seguradora"],
+      cnae_prefixes: ["65"], sector: "Finance", subtype: "Insurance" },
+    { keywords: ["software", "tecnologia", "ti ", "sistemas", "saas", "startup de tech"],
+      cnae_prefixes: ["62", "63"], sector: "Technology", subtype: "Software" },
+    { keywords: ["saúde", "clínica", "hospital", "farmácia", "laboratório"],
+      cnae_prefixes: ["86", "87", "88"], sector: "Healthcare", subtype: "Health" },
+    { keywords: ["educação", "escola", "ensino", "cursos", "treinamento"],
+      cnae_prefixes: ["85"], sector: "Education", subtype: "Education" },
+    { keywords: ["construção", "incorporação", "obra", "imóvel"],
+      cnae_prefixes: ["41", "42", "43"], sector: "Real Estate", subtype: "Construction" },
+    { keywords: ["logística", "transporte", "frete", "distribuição"],
+      cnae_prefixes: ["49", "50", "51", "52"], sector: "Logistics", subtype: "Logistics" },
+    { keywords: ["comércio", "varejo", "loja", "venda"],
+      cnae_prefixes: ["45", "46", "47"], sector: "Retail", subtype: "Retail" },
+    { keywords: ["agro", "agricultura", "pecuária", "fazenda"],
+      cnae_prefixes: ["01", "02", "03"], sector: "Agribusiness", subtype: "Agro" },
+    { keywords: ["energia", "elétrica", "solar", "geração"],
+      cnae_prefixes: ["35"], sector: "Energy", subtype: "Energy" },
+    { keywords: ["telecom", "telecomunicações", "internet", "fibra"],
+      cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom" },
+  ];
+
+  // Extrair faturamento: "fatura 5M", "faturamento de 2 milhões", "R$3mi"
+  const revenueMatch = lower.match(/r?\$?\s*(\d+[\.,]?\d*)\s*(m|mi|milhão|milhões|k|mil|b|bi|bilh)/i);
+  let buyerRevenueBrl: number | null = null;
+  if (revenueMatch) {
+    const val = parseFloat(revenueMatch[1].replace(",", "."));
+    const unit = revenueMatch[2].toLowerCase();
+    if (unit.startsWith("b")) buyerRevenueBrl = val * 1e9;
+    else if (unit.startsWith("m")) buyerRevenueBrl = val * 1e6;
+    else if (unit.startsWith("k") || unit.startsWith("mil")) buyerRevenueBrl = val * 1e3;
+  }
+
+  const matched = KEYWORD_MAP.find(entry =>
+    entry.keywords.some(kw => lower.includes(kw))
+  );
+
+  const maxCapital = buyerRevenueBrl ? buyerRevenueBrl * 0.5 : null;
+  const minCapital = 10_000;
+
+  return {
+    target_sector: matched?.sector || null,
+    cnae_prefixes: matched?.cnae_prefixes || [],
+    cnae_subtype: matched?.subtype || null,
+    target_size: lower.includes("startup") ? "Startup" : lower.includes("pequen") ? "Small" : lower.includes("médi") ? "Medium" : "Small",
+    buyer_revenue_brl: buyerRevenueBrl,
+    max_capital_social_brl: maxCapital,
+    min_capital_social_brl: minCapital,
+    intent: lower.includes("adquir") || lower.includes("comprar") ? "acquisition" : lower.includes("parceri") ? "partnership" : "acquisition",
+    human_readable_summary: `${matched?.subtype || matched?.sector || "Empresa"} (CNAE ${matched?.cnae_prefixes?.map(p => `${p}xx`).join("/") || "N/A"}) · ${buyerRevenueBrl ? `Capital até R$${(maxCapital! / 1e6).toFixed(1)}M` : ""}`,
+  };
+}
 ```
 
-**Confidence-aware scoring** — modificar o rubric do LLM:
+**2. `src/pages/Matching.tsx` — Substituir LLM de matching por scoring determinístico local**
 
+O `runMatchMutation` (linha 332) hoje chama `ai-analyze` type `"match"` e recebe análise completa de 25 empresas. Será reescrito para:
+
+1. Buscar as empresas via `national-search` (mantém, sem IA)
+2. Aplicar o pré-score determinístico **localmente no frontend** (já existe a lógica no `ai-analyze`, só move para o cliente)
+3. Calcular os 5 scores de dimensão deterministicamente (setor, porte, estado, capital, CNAE)
+4. Calcular `compatibility_score` com os pesos por perfil de investidor
+5. Exibir os resultados **sem chamar LLM nenhum**
+
+O score determinístico funciona assim:
 ```typescript
-// No systemPrompt, substituir a linha de penalidade fixa:
-// ANTES: "reduce financial_fit by 20 points"  
-// DEPOIS:
-`FINANCIAL_FIT COM DADOS AUSENTES:
-- Se a empresa não tem receita nem EBITDA, atribua financial_fit = 50 (neutro, não penalize).
-- Indique no dimension_explanations que os dados são estimados ou ausentes.
-- O sistema automaticamente reduzirá o peso de financial_fit no cálculo final para empresas sem dados.
+function scoreCompany(company, criteria, investorProfile, cnae_prefixes) {
+  // sector_fit
+  const sectorExact = company.sector === criteria.target_sector;
+  const sectorAdjacent = SECTOR_ADJACENCY[criteria.target_sector]?.includes(company.sector);
+  const cnaeBonus = cnae_prefixes.some(p => company.description?.includes(`CNAE: ${p}`));
+  const sector_fit = sectorExact ? 90 : sectorAdjacent ? 65 : cnaeBonus ? 70 : 30;
 
-PESO DINÂMICO DE FINANCIAL_FIT (calcule o compatibility_score assim):
-- Se a empresa tem receita E ebitda: use os pesos normais por perfil
-- Se a empresa só tem capital_social (sem receita real): reduza financial_fit_weight em 40%
-  e redistribua esse peso para sector_fit e size_fit igualmente
-- Exemplo Moderado com dados ausentes: 
-  sector_fit*0.30 + size_fit*0.30 + financial_fit*0.15 + location_fit*0.15 + risk_fit*0.10`
+  // size_fit
+  const sizeOrder = ["Startup","Small","Medium","Large","Enterprise"];
+  const diff = Math.abs(sizeOrder.indexOf(company.size) - sizeOrder.indexOf(criteria.target_size));
+  const size_fit = diff === 0 ? 95 : diff === 1 ? 75 : diff === 2 ? 50 : 25;
+
+  // location_fit
+  const location_fit = company.state === criteria.target_state ? 90 : 50;
+
+  // financial_fit (sem dados = neutro)
+  const financial_fit = company.revenue ? 65 : 50;
+
+  // risk_fit
+  const risk_fit = 60; // neutro sem dados reais
+
+  // Pesos por perfil
+  const weights = PROFILE_WEIGHTS[investorProfile];
+  const compatibility_score = Math.round(
+    sector_fit * weights.sector +
+    size_fit * weights.size +
+    financial_fit * weights.financial +
+    location_fit * weights.location +
+    risk_fit * weights.risk
+  );
+
+  return { compatibility_score, dimensions: { sector_fit, size_fit, location_fit, financial_fit, risk_fit } };
+}
 ```
 
-**3. `src/pages/Matching.tsx` — botões de feedback**
+Os resultados são exibidos imediatamente. Sem IA, sem espera, sem custo.
 
-Adicionar no card de resultado de cada match (no bloco de ações existente):
+**3. `src/pages/Matching.tsx` — Botão "Ver análise IA" por empresa individual**
 
-- Botão "Shortlist" → registra `action_type: "saved"` na tabela `match_feedback`
-- Botão "Ignorar" → registra `action_type: "ignored"` + campo opcional de motivo
-- Botão "Contatado" → registra `action_type: "contacted"`
-- Exibir badge na aba "Resultados" mostrando quantas empresas estão na shortlist
+Em vez de análise automática de todas as 25, adicionar botão **por empresa** no card de resultado:
 
-**4. Indicador de confiança no card de resultado**
+```text
+┌─────────────────────────────────────────────┐
+│ EMPRESA XYZ LTDA              Score: 82%    │
+│ Consultoria · SP · Pequena                  │
+│ ████████████████████░ 82                   │
+│                                             │
+│ [Shortlist] [Ignorar] [Ver análise IA ✦]   │
+└─────────────────────────────────────────────┘
+```
 
-Ao expandir um match (accordion), mostrar:
-- Se `source === "national_db"`: badge cinza "Dados estimados — capital social proxy"
-- Se o Deep Dive foi executado e retornou `confidence_score`: mostrar badge colorido por nível
+O botão "Ver análise IA ✦" chama o **`company-deep-dive`** (que já existe) ou uma versão reduzida do `ai-analyze` para **aquela empresa específica** — 1 empresa, 1 chamada, sob demanda.
+
+**4. Remover `type: "match"` do `ai-analyze/index.ts`**
+
+O case `"match"` inteiro pode ser removido ou desativado. Toda sua lógica determinística (pré-score, adjacência, pesos por perfil) migra para o frontend em TypeScript puro.
+
+**5. Manter `parse-intent` como fallback no `ai-analyze`**
+
+O case `"parse-intent"` pode ser mantido no edge function mas **não será mais chamado automaticamente**. Será chamado apenas se o lookup local falhar em encontrar CNAE (ou seja: usuário descreve algo muito incomum que o lookup não cobre). Isso vira exceção, não regra.
 
 ---
 
-### Ordem de implementação
+### O que muda na UX
 
-1. Migration da tabela `match_feedback`
-2. Pré-score com adjacência setorial (`ai-analyze/index.ts`)
-3. Confidence-aware scoring no prompt LLM (`ai-analyze/index.ts`)
-4. Botões de feedback na UI de resultados (`Matching.tsx`)
-5. Badge de confiança dos dados por empresa no resultado
+**Antes:**
+- Usuário preenche texto → aguarda IA (3-5s)
+- Clica "Iniciar Matching" → aguarda IA analisar 25 empresas (15-30s)
+- Resultados aparecem com análise completa
 
-### Arquivos a modificar
+**Depois:**
+- Usuário preenche texto → resultado instantâneo (lookup local, 0s)
+- Clica "Iniciar Matching" → resultados aparecem em ~3s (só `national-search`, sem IA)
+- Usuário clica "Ver análise IA" em 1-3 empresas interessantes → IA processa só essa, 5-8s
 
-1. Nova migration SQL — tabela `match_feedback` com RLS
-2. `supabase/functions/ai-analyze/index.ts` — pré-score com adjacência + confidence-aware scoring
-3. `src/pages/Matching.tsx` — botões de ação de feedback + badge de confiança
+**Custo de IA por sessão de busca:**
+- Antes: 1 chamada de `parse-intent` + 1 chamada de `match` (25 empresas) = ~15.000 tokens por busca
+- Depois: 0 chamadas na busca + 1 chamada por empresa que o usuário quer analisar (~1.500 tokens)
+- Redução: **~90% de custo de IA eliminado**
 
-### O que NÃO fazer agora (e por quê)
+---
 
-- **Two-Tower neural**: sem labels de treino, qualquer modelo vai aprender padrões espúrios. Implementar depois de 200+ eventos de feedback registrados.
-- **Cross-Encoder**: mesmo motivo + custo de inferência seria comparável ao LLM atual.
-- **GNN**: requer grafo de transações reais — horizonte de 6-12 meses mínimo.
-- **Embeddings via API**: o gateway Lovable AI não expõe endpoint de embeddings separado. Seria necessário uma chamada adicional por empresa → aumenta latência e custo. Deixar para quando houver endpoint dedicado.
+### Arquivos a Modificar
+
+1. **`src/pages/Matching.tsx`** — principal:
+   - Substituir `parseIntent()` por `parseIntentLocal()` (sem IA)
+   - Reescrever `runMatchMutation` para scoring determinístico local (sem `ai-analyze`)
+   - Adicionar botão "Ver análise IA" por empresa individual
+   - Adicionar função `analyzeOneCompany(company)` que chama IA para 1 empresa
+
+2. **`supabase/functions/ai-analyze/index.ts`** — simplificar:
+   - Adicionar case `"match-single"` para analisar 1 empresa específica (substitui o `"match"` com 25)
+   - Manter `"parse-intent"` como fallback mas não chamar por padrão
+   - O case `"match"` original pode ser mantido para compatibilidade ou removido
+
+3. **`supabase/functions/company-deep-dive/index.ts`** — avaliar:
+   - Se o `"match-single"` for leve o suficiente, o Deep Dive só é chamado para análise de 5 camadas (BrasilAPI + inteligência profunda), mantendo-o como funcionalidade premium separada
