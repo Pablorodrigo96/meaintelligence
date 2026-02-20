@@ -109,10 +109,9 @@ function calcCompleteness(c: { revenue?: number | null; ebitda?: number | null; 
 }
 
 const PROGRESS_STEPS = [
-  { label: "Buscando no banco nacional...", pct: 10 },
-  { label: "Aplicando pré-filtros determinísticos...", pct: 30 },
-  { label: "Enviando top candidatos para IA...", pct: 50 },
-  { label: "Analisando compatibilidade multidimensional...", pct: 75 },
+  { label: "Buscando no banco nacional...", pct: 15 },
+  { label: "Aplicando filtros determinísticos...", pct: 40 },
+  { label: "Calculando scores de compatibilidade...", pct: 70 },
   { label: "Salvando resultados...", pct: 90 },
 ];
 
@@ -209,6 +208,9 @@ export default function Matching() {
   const [funnelOpen, setFunnelOpen] = useState(true);
   // feedback state: set of match IDs with pending feedback action
   const [feedbackLoading, setFeedbackLoading] = useState<Record<string, string>>({});
+  // AI enrichment per individual match (on-demand)
+  const [aiEnrichingMatch, setAiEnrichingMatch] = useState<string | null>(null);
+
 
   // Natural language / parse-intent state
   const [nlText, setNlText] = useState("");
@@ -333,51 +335,36 @@ export default function Matching() {
     mutationFn: async () => {
       setProgressStep(0);
       const advanceProgress = (step: number) => setProgressStep(step);
-
       let companiesToAnalyze: any[] = [];
 
       if (searchSource === "nacional") {
-        // Step 1: Fetch from national database (Layer 1 - DB filter)
         advanceProgress(1);
         const { data: nationalData, error: nationalError } = await supabase.functions.invoke("national-search", {
           body: {
             target_sector: criteria.target_sector || null,
             target_state: criteria.target_state || null,
             target_size: criteria.target_size || null,
-            // Inject parse-intent params if available (overrides broad sector filter)
-            ...(nlExtraParams.cnae_prefixes && nlExtraParams.cnae_prefixes.length > 0 ? {
-              cnae_prefixes: nlExtraParams.cnae_prefixes,
-            } : {}),
+            ...(nlExtraParams.cnae_prefixes && nlExtraParams.cnae_prefixes.length > 0 ? { cnae_prefixes: nlExtraParams.cnae_prefixes } : {}),
             ...(nlExtraParams.min_capital_social != null ? { min_capital_social: nlExtraParams.min_capital_social } : {}),
             ...(nlExtraParams.max_capital_social != null ? { max_capital_social: nlExtraParams.max_capital_social } : {}),
             ...(nlExtraParams.buyer_revenue_brl != null ? { buyer_revenue_brl: nlExtraParams.buyer_revenue_brl } : {}),
-            // Layer 1: limit 80 — pre-filtered at DB level
           },
         });
-
         if (nationalError) throw new Error(`Erro ao buscar Base Nacional: ${nationalError.message}`);
         if (nationalData?.error) throw new Error(`Erro na Base Nacional: ${nationalData.error}`);
-
         companiesToAnalyze = nationalData?.companies || [];
         setNationalCompanies(companiesToAnalyze);
-        // Record Layer 1 count
-        setFunnelStats(prev => ({ db_fetched: nationalData?.db_count || companiesToAnalyze.length, pre_filtered: 0, ai_analyzed: 0, final_matches: 0, ...prev }));
-
-        if (companiesToAnalyze.length === 0) {
-          throw new Error("Nenhuma empresa encontrada na Base Nacional com esses critérios. Tente ampliar os filtros.");
-        }
+        setFunnelStats({ db_fetched: nationalData?.db_count || companiesToAnalyze.length, pre_filtered: 0, ai_analyzed: 0, final_matches: 0 });
+        if (companiesToAnalyze.length === 0) throw new Error("Nenhuma empresa encontrada na Base Nacional com esses critérios. Tente ampliar os filtros.");
       } else {
-        // Minha Carteira mode
         if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios.");
         companiesToAnalyze = filteredCompanies.map((c) => {
-          const dist = refCityData && c.latitude != null && c.longitude != null
-            ? haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude)
-            : null;
+          const dist = refCityData && c.latitude != null && c.longitude != null ? haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude) : null;
           return { ...c, distance_km: dist ? Math.round(dist) : null };
         });
       }
 
-      advanceProgress(1);
+      advanceProgress(2);
       const saveCriteria = {
         user_id: user!.id,
         target_sector: criteria.target_sector || null,
@@ -396,106 +383,66 @@ export default function Matching() {
       await supabase.from("match_criteria").insert(saveCriteria);
       await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
 
-      advanceProgress(2);
-
-      const { data, error } = await supabase.functions.invoke("ai-analyze", {
-        body: {
-          type: "match",
-          data: {
-            criteria: {
-              ...criteria,
-              reference_city: criteria.geo_reference_city,
-              radius_km: criteria.no_geo_limit ? null : criteria.geo_radius_km,
-            },
-            companies: companiesToAnalyze,
-            investor_profile: investorProfile,
-          },
-        },
-      });
-
+      // ── SCORING DETERMINÍSTICO LOCAL (zero chamadas de IA) ─────────────
       advanceProgress(3);
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      const scored = companiesToAnalyze.map((company: any) => {
+        const { compatibility_score, dimensions } = scoreCompanyLocal(company);
+        return { company, compatibility_score, dimensions };
+      });
+      const top25 = scored.sort((a, b) => b.compatibility_score - a.compatibility_score).slice(0, 25);
+      setFunnelStats(prev => prev
+        ? { ...prev, pre_filtered: top25.length, ai_analyzed: 0, final_matches: 0 }
+        : { db_fetched: companiesToAnalyze.length, pre_filtered: top25.length, ai_analyzed: 0, final_matches: 0 }
+      );
 
-      // Capture funnel data from Layer 2 (pre-score) response
-      const funnelFromAI = data.funnel as { received: number; pre_filtered: number } | null;
-      if (funnelFromAI) {
-        setFunnelStats(prev => ({
-          db_fetched: prev?.db_fetched || funnelFromAI.received,
-          pre_filtered: funnelFromAI.pre_filtered,
-          ai_analyzed: funnelFromAI.pre_filtered,
-          final_matches: 0,
-        }));
-      }
-
+      // ── PERSIST RESULTS ────────────────────────────────────────────────
       advanceProgress(4);
-      const results = Array.isArray(data.result) ? data.result : [];
-      
-      for (const match of results) {
-        const company = companiesToAnalyze.find((c: any) => c.id === match.company_id);
-        if (company) {
-          if (searchSource === "nacional") {
-            // For national companies, save to local companies table first
-            const { data: savedCompany } = await supabase.from("companies").insert({
-              user_id: user!.id,
-              name: company.name,
-              cnpj: company.cnpj,
-              sector: company.sector,
-              state: company.state,
-              city: company.city,
-              size: company.size,
-              revenue: company.revenue,
-              description: company.description,
-              status: "active",
-              risk_level: "medium",
-            }).select().single();
-
-            if (savedCompany) {
-              await supabase.from("matches").insert({
-                buyer_id: user!.id,
-                seller_company_id: savedCompany.id,
-                compatibility_score: match.compatibility_score,
-                ai_analysis: JSON.stringify({
-                  analysis: match.analysis,
-                  dimensions: match.dimensions,
-                  dimension_explanations: match.dimension_explanations,
-                  recommendation: match.recommendation,
-                  strengths: match.strengths || [],
-                  weaknesses: match.weaknesses || [],
-                  source: "national_db",
-                }),
-                status: "new",
-              });
-            }
-          } else {
+      let savedCount = 0;
+      for (const { company, compatibility_score, dimensions } of top25) {
+        if (searchSource === "nacional") {
+          const { data: savedCompany } = await supabase.from("companies").insert({
+            user_id: user!.id,
+            name: company.name,
+            cnpj: company.cnpj,
+            sector: company.sector,
+            state: company.state,
+            city: company.city,
+            size: company.size,
+            revenue: company.revenue,
+            description: company.description,
+            status: "active",
+            risk_level: "medium",
+          }).select().single();
+          if (savedCompany) {
             await supabase.from("matches").insert({
               buyer_id: user!.id,
-              seller_company_id: company.id,
-              compatibility_score: match.compatibility_score,
-              ai_analysis: JSON.stringify({
-                analysis: match.analysis,
-                dimensions: match.dimensions,
-                dimension_explanations: match.dimension_explanations,
-                recommendation: match.recommendation,
-                strengths: match.strengths || [],
-                weaknesses: match.weaknesses || [],
-              }),
+              seller_company_id: savedCompany.id,
+              compatibility_score,
+              ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], source: "national_db", ai_enriched: false }),
               status: "new",
             });
+            savedCount++;
           }
+        } else {
+          await supabase.from("matches").insert({
+            buyer_id: user!.id,
+            seller_company_id: company.id,
+            compatibility_score,
+            ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], ai_enriched: false }),
+            status: "new",
+          });
+          savedCount++;
         }
       }
-      advanceProgress(5);
-      // Final funnel count
-      setFunnelStats(prev => prev ? { ...prev, final_matches: results.length } : null);
-      return results.length;
+      setFunnelStats(prev => prev ? { ...prev, final_matches: savedCount } : null);
+      return savedCount;
     },
     onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ["matches"] });
       queryClient.invalidateQueries({ queryKey: ["match_criteria"] });
       setActiveTab("results");
       setProgressStep(0);
-      toast({ title: "Matching completo!", description: `${count} empresas analisadas pela IA.` });
+      toast({ title: "Matching completo!", description: `${count} empresas encontradas. Clique em "Ver análise IA ✦" para enriquecer individualmente.` });
     },
     onError: (e: any) => {
       setProgressStep(0);
@@ -541,21 +488,66 @@ export default function Matching() {
     }
   };
 
+  // Analyze a single company with AI (on demand only)
+  const analyzeOneCompany = async (match: MatchResult) => {
+    if (!match.companies?.id) return;
+    setAiEnrichingMatch(match.id);
+    try {
+      const currentAnalysis = (() => { try { return JSON.parse(match.ai_analysis || "{}"); } catch { return {}; } })();
+      const { data, error } = await supabase.functions.invoke("ai-analyze", {
+        body: {
+          type: "match-single",
+          data: {
+            company: match.companies,
+            criteria: { ...criteria, cnae_prefixes: nlExtraParams.cnae_prefixes || nlResult?.cnae_prefixes || [] },
+            investor_profile: investorProfile,
+            pre_score_dimensions: currentAnalysis.dimensions || null,
+          },
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const result = data?.result || data;
+      // Update the match record with AI enrichment
+      const enriched = {
+        ...currentAnalysis,
+        analysis: result.analysis || result,
+        dimensions: result.dimensions || currentAnalysis.dimensions,
+        dimension_explanations: result.dimension_explanations || null,
+        recommendation: result.recommendation || null,
+        strengths: result.strengths || [],
+        weaknesses: result.weaknesses || [],
+        ai_enriched: true,
+      };
+      const newScore = result.compatibility_score || match.compatibility_score;
+      await supabase.from("matches").update({
+        ai_analysis: JSON.stringify(enriched),
+        compatibility_score: newScore,
+      }).eq("id", match.id);
+      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      toast({ title: "Análise IA concluída!", description: `${match.companies?.name} enriquecida com sucesso.` });
+    } catch (e: any) {
+      toast({ title: "Erro na análise IA", description: e.message, variant: "destructive" });
+    } finally {
+      setAiEnrichingMatch(null);
+    }
+  };
 
-  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[] } => {
-    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [] };
+  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean } => {
+    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
     try {
       const parsed = JSON.parse(raw);
       return {
-        analysis: parsed.analysis || raw,
+        analysis: parsed.analysis || "",
         dimensions: parsed.dimensions || null,
         dimension_explanations: parsed.dimension_explanations || null,
         recommendation: parsed.recommendation || "",
         strengths: parsed.strengths || [],
         weaknesses: parsed.weaknesses || [],
+        ai_enriched: parsed.ai_enriched === true,
       };
     } catch {
-      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [] };
+      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
     }
   };
 
@@ -635,30 +627,140 @@ export default function Matching() {
     return `R$${val}`;
   };
 
-  const parseIntent = async () => {
+  // ── LOOKUP LOCAL DE INTENÇÃO (zero IA, zero custo) ──────────────────────
+  const KEYWORD_MAP = [
+    { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro", "escritório contábil", "contabilidade"], cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
+    { keywords: ["banco", "financeira", "crédito", "empréstimo", "fintec"], cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking" },
+    { keywords: ["seguro", "previdência", "seguradora"], cnae_prefixes: ["65"], sector: "Finance", subtype: "Insurance" },
+    { keywords: ["software", "tecnologia", "ti ", " ti,", "sistemas", "saas", "startup de tech", "desenvolvimento", "app", "aplicativo"], cnae_prefixes: ["62", "63"], sector: "Technology", subtype: "Software" },
+    { keywords: ["saúde", "clínica", "hospital", "farmácia", "laboratório", "medicina", "odontologia", "dentista"], cnae_prefixes: ["86", "87", "88"], sector: "Healthcare", subtype: "Health" },
+    { keywords: ["educação", "escola", "ensino", "cursos", "treinamento", "faculdade", "universidade"], cnae_prefixes: ["85"], sector: "Education", subtype: "Education" },
+    { keywords: ["construção", "incorporação", "obra", "imóvel", "imobiliária", "construtora"], cnae_prefixes: ["41", "42", "43"], sector: "Real Estate", subtype: "Construction" },
+    { keywords: ["logística", "transporte", "frete", "distribuição", "armazém", "estoque"], cnae_prefixes: ["49", "50", "51", "52"], sector: "Logistics", subtype: "Logistics" },
+    { keywords: ["comércio", "varejo", "loja", "venda", "atacado", "distribuidora"], cnae_prefixes: ["45", "46", "47"], sector: "Retail", subtype: "Retail" },
+    { keywords: ["agro", "agricultura", "pecuária", "fazenda", "agronegócio", "soja", "milho", "café"], cnae_prefixes: ["01", "02", "03"], sector: "Agribusiness", subtype: "Agro" },
+    { keywords: ["energia", "elétrica", "solar", "geração", "eólica", "fotovoltaico"], cnae_prefixes: ["35"], sector: "Energy", subtype: "Energy" },
+    { keywords: ["telecom", "telecomunicações", "internet", "fibra", "provedor"], cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom" },
+    { keywords: ["indústria", "manufatura", "fábrica", "industrial", "produção"], cnae_prefixes: ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "23", "24", "25"], sector: "Manufacturing", subtype: "Manufacturing" },
+  ];
+
+  const SECTOR_ADJACENCY: Record<string, string[]> = {
+    "Finance": ["Technology", "Real Estate", "Other"],
+    "Technology": ["Finance", "Telecom", "Education"],
+    "Healthcare": ["Technology", "Education", "Other"],
+    "Manufacturing": ["Logistics", "Energy", "Retail"],
+    "Retail": ["Logistics", "Manufacturing", "Other"],
+    "Logistics": ["Manufacturing", "Retail", "Agribusiness"],
+    "Real Estate": ["Finance", "Manufacturing", "Other"],
+    "Agribusiness": ["Logistics", "Manufacturing", "Energy"],
+    "Education": ["Technology", "Healthcare", "Other"],
+    "Energy": ["Manufacturing", "Agribusiness", "Other"],
+    "Telecom": ["Technology", "Finance", "Other"],
+    "Other": [],
+  };
+
+  const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
+    "Agressivo": { sector: 0.30, size: 0.25, financial: 0.20, location: 0.15, risk: 0.10 },
+    "Moderado":  { sector: 0.20, size: 0.20, financial: 0.25, location: 0.20, risk: 0.15 },
+    "Conservador": { sector: 0.15, size: 0.15, financial: 0.30, location: 0.10, risk: 0.30 },
+  };
+
+  function parseIntentLocal(text: string) {
+    const lower = text.toLowerCase();
+    const revenueMatch = lower.match(/r?\$?\s*(\d+[\.,]?\d*)\s*(m|mi|milhão|milhões|k|mil|b|bi|bilh)/i);
+    let buyerRevenueBrl: number | null = null;
+    if (revenueMatch) {
+      const val = parseFloat(revenueMatch[1].replace(",", "."));
+      const unit = revenueMatch[2].toLowerCase();
+      if (unit.startsWith("b")) buyerRevenueBrl = val * 1e9;
+      else if (unit.startsWith("m")) buyerRevenueBrl = val * 1e6;
+      else if (unit.startsWith("k") || unit === "mil") buyerRevenueBrl = val * 1e3;
+    }
+    const matched = KEYWORD_MAP.find(entry => entry.keywords.some(kw => lower.includes(kw)));
+    const maxCapital = buyerRevenueBrl ? buyerRevenueBrl * 0.5 : null;
+    const target_size = lower.includes("startup") ? "Startup" : lower.includes("pequen") ? "Small" : lower.includes("médi") ? "Medium" : lower.includes("grande") ? "Large" : "Small";
+    return {
+      target_sector: matched?.sector || null,
+      cnae_prefixes: matched?.cnae_prefixes || [],
+      cnae_subtype: matched?.subtype || null,
+      target_size,
+      buyer_revenue_brl: buyerRevenueBrl,
+      max_capital_social_brl: maxCapital,
+      min_capital_social_brl: 10_000,
+      intent: lower.includes("adquir") || lower.includes("comprar") ? "acquisition" : lower.includes("parceri") ? "partnership" : "acquisition",
+      suggested_notes: matched ? `${matched.subtype || matched.sector} (CNAE ${matched.cnae_prefixes.map(p => `${p}xx`).join("/")})` : "",
+      human_readable_summary: `${matched?.subtype || matched?.sector || "Empresa"} (CNAE ${matched?.cnae_prefixes?.map(p => `${p}xx`).join("/") || "N/A"}) · ${buyerRevenueBrl ? `Capital até R$${((maxCapital || 0) / 1e6).toFixed(1)}M` : ""}`,
+    };
+  }
+
+  function scoreCompanyLocal(company: any) {
+    const targetSector = criteria.target_sector || nlResult?.target_sector || null;
+    const targetSize = criteria.target_size || nlResult?.target_size || null;
+    const targetState = criteria.target_state || null;
+    const cnaePrefixes: string[] = (nlExtraParams.cnae_prefixes || nlResult?.cnae_prefixes || []) as string[];
+
+    // sector_fit
+    const sectorExact = targetSector && company.sector === targetSector;
+    const sectorAdjacent = targetSector && SECTOR_ADJACENCY[targetSector]?.includes(company.sector);
+    const companyCnae = company.cnae_fiscal_principal || company.description?.match(/CNAE: (\d+)/)?.[1] || "";
+    const cnaeBonus = cnaePrefixes.length > 0 && cnaePrefixes.some((p: string) => String(companyCnae).startsWith(p));
+    const sector_fit = sectorExact ? 90 : cnaeBonus ? 75 : sectorAdjacent ? 65 : targetSector ? 30 : 60;
+
+    // size_fit
+    const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
+    const diff = targetSize ? Math.abs(sizeOrder.indexOf(company.size || "") - sizeOrder.indexOf(targetSize)) : 0;
+    const size_fit = !targetSize ? 60 : diff === 0 ? 95 : diff === 1 ? 75 : diff === 2 ? 50 : 25;
+
+    // location_fit
+    const location_fit = !targetState ? 60 : company.state === targetState ? 90 : 45;
+
+    // financial_fit (sem dados reais = neutro)
+    const financial_fit = company.revenue && company.ebitda ? 70 : company.revenue ? 60 : 50;
+
+    // risk_fit (neutro sem dados reais)
+    const risk_fit = 55;
+
+    // Pesos ajustados para dados ausentes
+    const hasRealFinancials = !!(company.revenue && company.ebitda);
+    const weights = { ...(PROFILE_WEIGHTS[investorProfile] || PROFILE_WEIGHTS["Moderado"]) };
+    if (!hasRealFinancials) {
+      const reduction = weights.financial * 0.4;
+      weights.financial -= reduction;
+      weights.sector += reduction / 2;
+      weights.size += reduction / 2;
+    }
+
+    const compatibility_score = Math.round(
+      sector_fit * weights.sector +
+      size_fit * weights.size +
+      financial_fit * weights.financial +
+      location_fit * weights.location +
+      risk_fit * weights.risk
+    );
+
+    return {
+      compatibility_score: Math.min(100, Math.max(0, compatibility_score)),
+      dimensions: { sector_fit, size_fit, location_fit, financial_fit, risk_fit },
+    };
+  }
+  // ── FIM DO SCORING DETERMINÍSTICO ────────────────────────────────────────
+
+  const parseIntent = () => {
     if (!nlText.trim()) return;
     setNlParsing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-analyze", {
-        body: { type: "parse-intent", data: { text: nlText } },
+      const parsed = parseIntentLocal(nlText);
+      setNlResult(parsed);
+      setNlExtraParams({
+        cnae_prefixes: parsed.cnae_prefixes,
+        min_capital_social: parsed.min_capital_social_brl,
+        max_capital_social: parsed.max_capital_social_brl,
+        buyer_revenue_brl: parsed.buyer_revenue_brl,
       });
-      if (error) throw error;
-      const parsed = data?.result || data;
-      if (parsed && typeof parsed === "object") {
-        setNlResult(parsed);
-        // Store extra params for national-search
-        setNlExtraParams({
-          cnae_prefixes: parsed.cnae_prefixes,
-          min_capital_social: parsed.min_capital_social_brl,
-          max_capital_social: parsed.max_capital_social_brl,
-          buyer_revenue_brl: parsed.buyer_revenue_brl,
-        });
-        // Auto-fill criteria fields
-        if (parsed.target_sector) setCriteria((prev) => ({ ...prev, target_sector: parsed.target_sector }));
-        if (parsed.target_size) setCriteria((prev) => ({ ...prev, target_size: parsed.target_size }));
-        if (parsed.suggested_notes) setCriteria((prev) => ({ ...prev, notes: parsed.suggested_notes }));
-        toast({ title: "IA parametrizou sua busca!", description: parsed.human_readable_summary || "Campos preenchidos automaticamente." });
-      }
+      if (parsed.target_sector) setCriteria((prev) => ({ ...prev, target_sector: parsed.target_sector! }));
+      if (parsed.target_size) setCriteria((prev) => ({ ...prev, target_size: parsed.target_size }));
+      if (parsed.suggested_notes) setCriteria((prev) => ({ ...prev, notes: parsed.suggested_notes! }));
+      toast({ title: "Busca parametrizada!", description: parsed.human_readable_summary || "Campos preenchidos." });
     } catch (e: any) {
       toast({ title: "Erro ao analisar", description: e.message, variant: "destructive" });
     } finally {
@@ -1226,13 +1328,14 @@ export default function Matching() {
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {displayMatches.map((m, idx) => {
                    const parsedData = parseAnalysis(m.ai_analysis);
-                   const { analysis, dimensions, dimension_explanations, recommendation, strengths, weaknesses } = parsedData;
+                   const { analysis, dimensions, dimension_explanations, recommendation, strengths, weaknesses, ai_enriched } = parsedData;
                    const isFromNational = (() => { try { return JSON.parse(m.ai_analysis || "{}").source === "national_db"; } catch { return false; } })();
                    const isExpanded = expandedMatch === m.id;
                    const score = Number(m.compatibility_score);
                    const completeness = m.companies ? calcCompleteness(m.companies) : 0;
                    const isTop3 = idx < 3 && score >= 60;
                    const isFeedbackLoading = (action: string) => feedbackLoading[m.id] === action;
+                   const isAiEnriching = aiEnrichingMatch === m.id;
 
                   return (
                      <Card
@@ -1333,22 +1436,42 @@ export default function Matching() {
                                {isFeedbackLoading("contacted") ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
                                Contatado
                              </Button>
-                             <Button
-                               variant="ghost"
-                               size="sm"
-                               className="h-7 text-xs gap-1 text-muted-foreground"
-                               disabled={isFeedbackLoading("ignored")}
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 if (m.companies?.id) recordFeedback(m.id, m.companies.id, "ignored", idx + 1);
-                               }}
-                             >
-                               {isFeedbackLoading("ignored") ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
-                               Ignorar
-                             </Button>
-                           </div>
-                           {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                         </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs gap-1 text-muted-foreground"
+                                disabled={isFeedbackLoading("ignored")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (m.companies?.id) recordFeedback(m.id, m.companies.id, "ignored", idx + 1);
+                                }}
+                              >
+                                {isFeedbackLoading("ignored") ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                                Ignorar
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {ai_enriched && (
+                                <Badge variant="outline" className="text-[10px] border-accent/40 text-accent gap-0.5 px-1.5">
+                                  <Sparkles className="w-2.5 h-2.5" />IA
+                                </Badge>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`h-7 text-xs gap-1 ${ai_enriched ? "border-accent/40 text-accent hover:bg-accent/10" : "border-primary/40 text-primary hover:bg-primary/10"}`}
+                                disabled={isAiEnriching || !!aiEnrichingMatch}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  analyzeOneCompany(m);
+                                }}
+                              >
+                                {isAiEnriching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                {ai_enriched ? "Re-analisar IA" : "Ver análise IA ✦"}
+                              </Button>
+                              {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                            </div>
+                          </div>
 
                          {/* Expanded detail */}
                          {isExpanded && (
