@@ -109,14 +109,80 @@ function calcCompleteness(c: { revenue?: number | null; ebitda?: number | null; 
 }
 
 const PROGRESS_STEPS = [
-  { label: "Filtrando empresas...", pct: 15 },
-  { label: "Enviando para IA...", pct: 35 },
-  { label: "Analisando dimensões...", pct: 60 },
-  { label: "Processando resultados...", pct: 85 },
-  { label: "Salvando matches...", pct: 95 },
+  { label: "Buscando no banco nacional...", pct: 10 },
+  { label: "Aplicando pré-filtros determinísticos...", pct: 30 },
+  { label: "Enviando top candidatos para IA...", pct: 50 },
+  { label: "Analisando compatibilidade multidimensional...", pct: 75 },
+  { label: "Salvando resultados...", pct: 90 },
 ];
 
 type SearchSource = "carteira" | "nacional";
+
+interface FunnelStats {
+  db_fetched: number;
+  pre_filtered: number;
+  ai_analyzed: number;
+  final_matches: number;
+}
+
+function FunnelCard({ stats, open, onToggle }: { stats: FunnelStats; open: boolean; onToggle: () => void }) {
+  const steps = [
+    { label: "Base Nacional", icon: Database, value: stats.db_fetched, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Filtro BD", icon: Filter, value: stats.db_fetched, color: "text-accent", bg: "bg-accent/10" },
+    { label: "Pré-score", icon: Zap, value: stats.pre_filtered, color: "text-warning", bg: "bg-warning/10" },
+    { label: "Analisados", icon: Search, value: stats.ai_analyzed, color: "text-success", bg: "bg-success/10" },
+    { label: "Matches", icon: Star, value: stats.final_matches, color: "text-primary", bg: "bg-primary/10" },
+  ];
+
+  return (
+    <Collapsible open={open} onOpenChange={onToggle}>
+      <Card className="border-primary/20 bg-primary/5">
+        <CollapsibleTrigger className="w-full">
+          <CardHeader className="pb-2 pt-3 cursor-pointer">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Filter className="w-4 h-4 text-primary" />
+                Funil de Seleção
+                <Badge variant="secondary" className="text-xs">{stats.db_fetched} → {stats.final_matches} matches</Badge>
+              </CardTitle>
+              {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="pb-4 pt-0">
+            <div className="flex items-center gap-1 flex-wrap">
+              {steps.map((step, i) => {
+                const Icon = step.icon;
+                const convRate = i > 0 ? Math.round((step.value / (steps[i - 1].value || 1)) * 100) : 100;
+                return (
+                  <div key={step.label} className="flex items-center gap-1">
+                    {i > 0 && (
+                      <div className="flex flex-col items-center">
+                        <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[9px] text-muted-foreground">{convRate}%</span>
+                      </div>
+                    )}
+                    <div className={`flex flex-col items-center rounded-lg px-3 py-2 ${step.bg} min-w-[70px]`}>
+                      <Icon className={`w-4 h-4 ${step.color} mb-1`} />
+                      <span className={`text-lg font-bold ${step.color}`}>{step.value}</span>
+                      <span className="text-[10px] text-muted-foreground text-center leading-tight">{step.label}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Redução de {stats.db_fetched > 0 ? Math.round((1 - stats.ai_analyzed / stats.db_fetched) * 100) : 0}% no volume enviado para IA → resposta mais rápida e precisa.
+            </p>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+
 
 export default function Matching() {
   const { user } = useAuth();
@@ -134,6 +200,13 @@ export default function Matching() {
   const [geoOpen, setGeoOpen] = useState(false);
   const [searchSource, setSearchSource] = useState<SearchSource>("carteira");
   const [nationalCompanies, setNationalCompanies] = useState<any[]>([]);
+  const [funnelStats, setFunnelStats] = useState<{
+    db_fetched: number;
+    pre_filtered: number;
+    ai_analyzed: number;
+    final_matches: number;
+  } | null>(null);
+  const [funnelOpen, setFunnelOpen] = useState(true);
 
   const [criteria, setCriteria] = useState({
     target_sector: "",
@@ -238,14 +311,14 @@ export default function Matching() {
       let companiesToAnalyze: any[] = [];
 
       if (searchSource === "nacional") {
-        // Step 1: Fetch from national database
+        // Step 1: Fetch from national database (Layer 1 - DB filter)
         advanceProgress(1);
         const { data: nationalData, error: nationalError } = await supabase.functions.invoke("national-search", {
           body: {
             target_sector: criteria.target_sector || null,
             target_state: criteria.target_state || null,
             target_size: criteria.target_size || null,
-            limit: 150,
+            // Layer 1: limit 80 — pre-filtered at DB level
           },
         });
 
@@ -254,6 +327,8 @@ export default function Matching() {
 
         companiesToAnalyze = nationalData?.companies || [];
         setNationalCompanies(companiesToAnalyze);
+        // Record Layer 1 count
+        setFunnelStats(prev => ({ db_fetched: nationalData?.db_count || companiesToAnalyze.length, pre_filtered: 0, ai_analyzed: 0, final_matches: 0, ...prev }));
 
         if (companiesToAnalyze.length === 0) {
           throw new Error("Nenhuma empresa encontrada na Base Nacional com esses critérios. Tente ampliar os filtros.");
@@ -308,6 +383,17 @@ export default function Matching() {
       advanceProgress(3);
       if (error) throw error;
       if (data.error) throw new Error(data.error);
+
+      // Capture funnel data from Layer 2 (pre-score) response
+      const funnelFromAI = data.funnel as { received: number; pre_filtered: number } | null;
+      if (funnelFromAI) {
+        setFunnelStats(prev => ({
+          db_fetched: prev?.db_fetched || funnelFromAI.received,
+          pre_filtered: funnelFromAI.pre_filtered,
+          ai_analyzed: funnelFromAI.pre_filtered,
+          final_matches: 0,
+        }));
+      }
 
       advanceProgress(4);
       const results = Array.isArray(data.result) ? data.result : [];
@@ -367,6 +453,8 @@ export default function Matching() {
         }
       }
       advanceProgress(5);
+      // Final funnel count
+      setFunnelStats(prev => prev ? { ...prev, final_matches: results.length } : null);
       return results.length;
     },
     onSuccess: (count) => {
@@ -833,7 +921,12 @@ export default function Matching() {
                       <p className="font-medium text-sm">{PROGRESS_STEPS[Math.min(progressStep - 1, PROGRESS_STEPS.length - 1)].label}</p>
                     </div>
                     <Progress value={PROGRESS_STEPS[Math.min(progressStep - 1, PROGRESS_STEPS.length - 1)].pct} className="h-2" />
-                    <p className="text-xs text-muted-foreground">Perfil: {investorProfile} · {filteredCompanies.length} empresas</p>
+                    <p className="text-xs text-muted-foreground">
+                      Perfil: {investorProfile}
+                      {searchSource === "nacional" && funnelStats && funnelStats.db_fetched > 0 && (
+                        <> · <span className="text-primary font-medium">{funnelStats.db_fetched} do BD</span>{funnelStats.pre_filtered > 0 && <> → <span className="text-warning font-medium">{funnelStats.pre_filtered} para IA</span></>}</>
+                      )}
+                    </p>
                   </CardContent>
                 </Card>
               )}
@@ -898,6 +991,11 @@ export default function Matching() {
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Funnel card - shown after national search */}
+              {funnelStats && searchSource === "nacional" && (
+                <FunnelCard stats={funnelStats} open={funnelOpen} onToggle={() => setFunnelOpen(o => !o)} />
+              )}
 
               {/* Actions bar */}
               <div className="flex flex-wrap items-center gap-4">
