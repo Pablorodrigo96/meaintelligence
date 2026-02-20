@@ -5,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// CNAE to sector mapping
+// ─── CNAE → Sector ───────────────────────────────────────────────────────────
 function cnaeSector(cnae: number): string {
   if (cnae >= 100 && cnae <= 399) return "Agronegócio";
   if (cnae >= 500 && cnae <= 999) return "Indústria";
@@ -23,57 +23,122 @@ function cnaeSector(cnae: number): string {
   return "Serviços";
 }
 
-// Sector benchmarks (annual revenue in BRL)
-const SECTOR_BENCHMARKS: Record<string, number> = {
-  "Tecnologia": 5_000_000,
-  "Comércio": 1_500_000,
-  "Serviços": 1_000_000,
-  "Indústria": 3_000_000,
-  "Saúde": 2_000_000,
-  "Agronegócio": 4_000_000,
-  "Finanças": 3_500_000,
-  "Energia": 4_500_000,
-  "Logística": 2_500_000,
-  "Educação": 1_200_000,
-  "Imobiliário": 2_000_000,
-  "Construção": 2_500_000,
+// ─── Layer 2: CNAE Business Model Benchmarks ─────────────────────────────────
+const CNAE_BUSINESS_MODEL: Record<string, {
+  payroll_pct: number;
+  rev_per_employee: number;
+  margin_profile: string;
+  model_label: string;
+  benchmark_revenue: number;
+}> = {
+  "Tecnologia":  { payroll_pct: 0.40, rev_per_employee: 500_000, margin_profile: "Alta margem", model_label: "Software / SaaS", benchmark_revenue: 5_000_000 },
+  "Comércio":    { payroll_pct: 0.12, rev_per_employee: 200_000, margin_profile: "Margem baixa, giro alto", model_label: "Distribuição / Varejo", benchmark_revenue: 1_500_000 },
+  "Indústria":   { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Capital intensivo", model_label: "Produção industrial", benchmark_revenue: 3_000_000 },
+  "Saúde":       { payroll_pct: 0.35, rev_per_employee: 180_000, margin_profile: "Estável regulado", model_label: "Serviços de saúde", benchmark_revenue: 2_000_000 },
+  "Logística":   { payroll_pct: 0.25, rev_per_employee: 200_000, margin_profile: "Margem operacional apertada", model_label: "Transporte / Armazenagem", benchmark_revenue: 2_500_000 },
+  "Agronegócio": { payroll_pct: 0.15, rev_per_employee: 300_000, margin_profile: "Cíclico / Commodity", model_label: "Produção agrícola", benchmark_revenue: 4_000_000 },
+  "Finanças":    { payroll_pct: 0.30, rev_per_employee: 400_000, margin_profile: "Alta alavancagem", model_label: "Serviços financeiros", benchmark_revenue: 3_500_000 },
+  "Educação":    { payroll_pct: 0.45, rev_per_employee: 120_000, margin_profile: "Escala de alunos", model_label: "Ensino e treinamento", benchmark_revenue: 1_200_000 },
+  "Construção":  { payroll_pct: 0.22, rev_per_employee: 220_000, margin_profile: "Ciclo longo", model_label: "Incorporação / Obras", benchmark_revenue: 2_500_000 },
+  "Energia":     { payroll_pct: 0.18, rev_per_employee: 350_000, margin_profile: "Capital intensivo regulado", model_label: "Geração / Distribuição", benchmark_revenue: 4_500_000 },
+  "Imobiliário": { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Ciclo longo / Ativo intensivo", model_label: "Gestão imobiliária", benchmark_revenue: 2_000_000 },
+  "Serviços":    { payroll_pct: 0.38, rev_per_employee: 150_000, margin_profile: "Serviço profissional", model_label: "Prestação de serviços", benchmark_revenue: 1_000_000 },
 };
 
-// Revenue per employee by sector
-const REV_PER_EMPLOYEE: Record<string, number> = {
-  "Tecnologia": 500_000,
-  "Comércio": 200_000,
-  "Serviços": 150_000,
-  "Indústria": 250_000,
-  "Saúde": 180_000,
-  "Agronegócio": 300_000,
-  "Finanças": 400_000,
-  "Energia": 350_000,
-  "Logística": 200_000,
-  "Educação": 120_000,
-  "Imobiliário": 250_000,
-  "Construção": 220_000,
+// ─── Layer 5: Average Salary by Sector (BRL/month) ────────────────────────────
+const AVG_SALARY_BY_SECTOR: Record<string, number> = {
+  "Tecnologia":  8_000,
+  "Comércio":    2_500,
+  "Indústria":   3_500,
+  "Saúde":       4_500,
+  "Logística":   3_000,
+  "Agronegócio": 2_800,
+  "Finanças":    7_000,
+  "Educação":    3_200,
+  "Construção":  3_800,
+  "Energia":     6_000,
+  "Imobiliário": 4_000,
+  "Serviços":    2_800,
 };
 
-// Tax regime adjustment based on company size/porte
+// ─── Layer 1: Capital Social → Cluster de Porte ───────────────────────────────
+function capitalCluster(capital: number): { label: string; tier: number } {
+  if (capital < 10_000)    return { label: "Micro informal", tier: 1 };
+  if (capital < 100_000)   return { label: "Micro estruturada", tier: 2 };
+  if (capital < 500_000)   return { label: "Pequena", tier: 3 };
+  if (capital < 2_000_000) return { label: "Média estruturada", tier: 4 };
+  if (capital < 10_000_000) return { label: "Grande / Tese definida", tier: 5 };
+  return { label: "Corporação", tier: 6 };
+}
+
+// ─── Layer 3: Idade → Sinal de Maturidade ────────────────────────────────────
+function maturitySignal(yearsActive: number, capitalTier: number): {
+  signal: string;
+  label: string;
+  insight: string;
+} {
+  if (yearsActive < 2) {
+    return {
+      signal: "startup_nascente",
+      label: "Empresa nascente",
+      insight: "DD aprofundada necessária — risco operacional alto",
+    };
+  }
+  if (yearsActive < 5 && capitalTier >= 4) {
+    return {
+      signal: "crescimento_acelerado",
+      label: "Crescimento acelerado",
+      insight: "Alto potencial, alto risco — verificar queima de caixa",
+    };
+  }
+  if (yearsActive > 15 && capitalTier <= 3) {
+    return {
+      signal: "estagnacao_estrutural",
+      label: "Estagnação estrutural",
+      insight: "Empresa antiga com capital baixo — cuidado com EBITDA negativo",
+    };
+  }
+  if (yearsActive >= 5 && yearsActive <= 20 && capitalTier >= 3) {
+    return {
+      signal: "maturidade_consolidada",
+      label: "Maturidade consolidada",
+      insight: "Perfil ideal para M&A — histórico + capital estruturado",
+    };
+  }
+  return {
+    signal: "maturidade_consolidada",
+    label: "Perfil em consolidação",
+    insight: "Empresa em fase de estabilização",
+  };
+}
+
+// ─── Layer 4: Employee Cluster ────────────────────────────────────────────────
+function employeeCluster(n: number): string {
+  if (n < 10)  return "1–10";
+  if (n < 30)  return "10–30";
+  if (n < 80)  return "30–80";
+  if (n < 200) return "80–200";
+  if (n < 500) return "200–500";
+  return "500+";
+}
+
+// ─── Tax Regime ───────────────────────────────────────────────────────────────
 function regimeAdjust(porte: string): { factor: number; label: string; limit: number } {
   const p = (porte || "").toUpperCase();
   if (p.includes("MEI") || p === "01") return { factor: 0.8, label: "Simples Nacional (MEI)", limit: 81_000 };
-  if (p.includes("ME") || p === "03") return { factor: 0.8, label: "Simples Nacional (ME)", limit: 4_800_000 };
+  if (p.includes("ME")  || p === "03") return { factor: 0.8, label: "Simples Nacional (ME)", limit: 4_800_000 };
   if (p.includes("EPP") || p === "05") return { factor: 1.0, label: "Lucro Presumido (EPP)", limit: 78_000_000 };
   return { factor: 1.2, label: "Lucro Real (Demais)", limit: 300_000_000 };
 }
 
-// Location adjustment
 function locationAdjust(uf: string): { factor: number; label: string } {
   const high = ["SP", "RJ", "DF"];
-  const mid = ["MG", "PR", "RS", "SC", "BA"];
+  const mid  = ["MG", "PR", "RS", "SC", "BA"];
   if (high.includes(uf)) return { factor: 1.1, label: "Grande centro (1.1x)" };
-  if (mid.includes(uf)) return { factor: 1.0, label: "Centro regional (1.0x)" };
+  if (mid.includes(uf))  return { factor: 1.0, label: "Centro regional (1.0x)" };
   return { factor: 0.9, label: "Demais regiões (0.9x)" };
 }
 
-// Situação cadastral labels
 function situacaoLabel(code: number): { label: string; active: boolean } {
   const map: Record<number, string> = { 1: "Nula", 2: "Ativa", 3: "Suspensa", 4: "Inapta", 8: "Baixada" };
   return { label: map[code] || "Desconhecida", active: code === 2 };
@@ -106,11 +171,11 @@ serve(async (req) => {
           error: null,
           public_data: null,
           revenue_estimate: null,
+          intelligence: null,
         });
         continue;
       }
 
-      // Rate limit: wait 400ms between calls
       if (i > 0) await delay(400);
 
       try {
@@ -124,36 +189,94 @@ serve(async (req) => {
             error: `BrasilAPI retornou status ${resp.status}`,
             public_data: null,
             revenue_estimate: null,
+            intelligence: null,
           });
           continue;
         }
 
         const data = await resp.json();
-        const sector = cnaeSector(data.cnae_fiscal || 0);
-        const benchmark = SECTOR_BENCHMARKS[sector] || 1_500_000;
-        const regime = regimeAdjust(data.porte || "");
-        const loc = locationAdjust(data.uf || "");
-        const sit = situacaoLabel(data.situacao_cadastral || 0);
 
+        // ── Base calculations ──────────────────────────────────────────────────
+        const sector     = cnaeSector(data.cnae_fiscal || 0);
+        const sectorModel = CNAE_BUSINESS_MODEL[sector] || CNAE_BUSINESS_MODEL["Serviços"];
+        const regime     = regimeAdjust(data.porte || "");
+        const loc        = locationAdjust(data.uf || "");
+        const sit        = situacaoLabel(data.situacao_cadastral || 0);
         const capitalSocial = data.capital_social || 0;
-        const capitalRatio = regime.limit > 0 ? Math.min(capitalSocial / regime.limit, 3) : 1;
 
-        const estimatedRevenue = Math.round(benchmark * regime.factor * capitalRatio * loc.factor);
-
-        // Confidence score (0-100)
-        let confidence = 40; // base
-        if (capitalSocial > 0) confidence += 20;
-        if (sit.active) confidence += 15;
-        if (data.cnae_fiscal) confidence += 15;
-        if (data.uf) confidence += 10;
-        confidence = Math.min(confidence, 100);
-
-        // Years active
-        let yearsActive = null;
+        let yearsActive: number | null = null;
         if (data.data_inicio_atividade) {
           const start = new Date(data.data_inicio_atividade);
           yearsActive = Math.floor((Date.now() - start.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
         }
+
+        // ── Layer 1: Capital Cluster ───────────────────────────────────────────
+        const capCluster = capitalCluster(capitalSocial);
+
+        // ── Method 1: Benchmark × Regime × Capital Ratio × Location ───────────
+        const capitalRatio = regime.limit > 0 ? Math.min(capitalSocial / regime.limit, 3) : 1;
+        const revMethod1   = Math.round(sectorModel.benchmark_revenue * regime.factor * capitalRatio * loc.factor);
+
+        // ── Layer 4: Estimated employees from method 1 ─────────────────────────
+        const estimatedEmployeesRaw = revMethod1 / sectorModel.rev_per_employee;
+        const estimatedEmployees    = Math.max(1, Math.round(estimatedEmployeesRaw));
+        const empCluster            = employeeCluster(estimatedEmployees);
+
+        // ── Layer 5: Payroll inversion method ─────────────────────────────────
+        const avgSalary       = AVG_SALARY_BY_SECTOR[sector] || 3_500;
+        const monthlyPayroll  = avgSalary * estimatedEmployees;
+        const annualPayroll   = monthlyPayroll * 12;
+        const revMethod2      = Math.round(annualPayroll / sectorModel.payroll_pct);
+
+        // ── Convergence (divergence between two methods) ───────────────────────
+        const maxRev    = Math.max(revMethod1, revMethod2);
+        const divergence = maxRev > 0 ? Math.abs(revMethod1 - revMethod2) / maxRev : 1;
+        const convergencePct = Math.round((1 - divergence) * 100);
+
+        // ── Confidence score ───────────────────────────────────────────────────
+        let confidence = 30;
+        if (capitalSocial > 0) confidence += 15;
+        if (sit.active)        confidence += 15;
+        if (data.cnae_fiscal)  confidence += 10;
+        if (data.uf)           confidence += 5;
+        if (convergencePct > 70) confidence += 15;
+        else if (convergencePct > 50) confidence += 8;
+        if (yearsActive && yearsActive >= 3) confidence += 10;
+        confidence = Math.min(confidence, 100);
+
+        // ── Layer 3: Maturity Signal ───────────────────────────────────────────
+        const maturity = maturitySignal(yearsActive ?? 0, capCluster.tier);
+
+        // ── Alerts ────────────────────────────────────────────────────────────
+        const alerts: { severity: "high" | "medium" | "low"; message: string }[] = [];
+        if (!sit.active) alerts.push({ severity: "high", message: "Situação cadastral irregular — verificar antes de avançar" });
+        if (capCluster.tier <= 1) alerts.push({ severity: "medium", message: "Capital social muito baixo — provável empresa de fachada ou informal" });
+        if (maturity.signal === "estagnacao_estrutural") alerts.push({ severity: "medium", message: "Empresa antiga com crescimento estagnado — EBITDA pode ser negativo" });
+        if (maturity.signal === "startup_nascente") alerts.push({ severity: "low", message: "Empresa nascente — histórico operacional insuficiente para M&A" });
+        if (convergencePct < 40) alerts.push({ severity: "low", message: "Baixa convergência entre métodos de estimativa — dados insuficientes para confiança alta" });
+        if (yearsActive && yearsActive > 0 && capCluster.tier >= 4 && yearsActive < 3) alerts.push({ severity: "low", message: "Alto capital em empresa jovem — verificar origem dos recursos" });
+
+        // ── Intelligence object ────────────────────────────────────────────────
+        const intelligence = {
+          capital_cluster: capCluster,
+          employee_cluster: empCluster,
+          estimated_employees: estimatedEmployees,
+          avg_salary_brl: avgSalary,
+          monthly_payroll_brl: monthlyPayroll,
+          annual_payroll_brl: annualPayroll,
+          maturity_signal: maturity,
+          business_model: {
+            model_label: sectorModel.model_label,
+            margin_profile: sectorModel.margin_profile,
+            payroll_pct: sectorModel.payroll_pct,
+            rev_per_employee: sectorModel.rev_per_employee,
+          },
+          revenue_method1_brl: revMethod1,
+          revenue_method2_brl: revMethod2,
+          convergence_pct: convergencePct,
+          confidence_score: confidence,
+          alerts,
+        };
 
         results.push({
           company_id: company.id,
@@ -181,18 +304,20 @@ serve(async (req) => {
               qualificacao: s.qualificacao_socio,
             })),
           },
+          // Keep legacy revenue_estimate for backward compat
           revenue_estimate: {
-            estimated_revenue_brl: estimatedRevenue,
-            benchmark_sector: benchmark,
-            sector: sector,
+            estimated_revenue_brl: revMethod1,
+            benchmark_sector: sectorModel.benchmark_revenue,
+            sector,
             regime: regime.label,
             regime_factor: regime.factor,
             capital_ratio: Math.round(capitalRatio * 1000) / 1000,
             location_factor: loc.factor,
             location_label: loc.label,
             confidence_score: confidence,
-            formula: `${benchmark.toLocaleString("pt-BR")} × ${regime.factor} × ${(Math.round(capitalRatio * 1000) / 1000)} × ${loc.factor} = R$ ${estimatedRevenue.toLocaleString("pt-BR")}`,
+            formula: `${sectorModel.benchmark_revenue.toLocaleString("pt-BR")} × ${regime.factor} × ${Math.round(capitalRatio * 1000) / 1000} × ${loc.factor} = R$ ${revMethod1.toLocaleString("pt-BR")}`,
           },
+          intelligence,
         });
       } catch (fetchErr) {
         results.push({
@@ -203,18 +328,39 @@ serve(async (req) => {
           error: `Erro ao consultar BrasilAPI: ${fetchErr instanceof Error ? fetchErr.message : "unknown"}`,
           public_data: null,
           revenue_estimate: null,
+          intelligence: null,
         });
       }
     }
 
-    // Generate AI consolidated analysis
+    // ── AI Consolidated Analysis ───────────────────────────────────────────────
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     let aiAnalysis = null;
 
     if (LOVABLE_API_KEY) {
-      const companiesWithData = results.filter((r) => r.public_data);
+      const companiesWithData = results.filter((r) => r.intelligence);
       if (companiesWithData.length > 0) {
         try {
+          // Build structured summary for AI (not raw JSON)
+          const structuredSummary = companiesWithData.map(r => ({
+            empresa: r.company_name,
+            cnpj: r.cnpj_formatted,
+            setor: r.public_data?.sector_mapped,
+            modelo_negocio: r.intelligence?.business_model.model_label,
+            margem_perfil: r.intelligence?.business_model.margin_profile,
+            cluster_porte: r.intelligence?.capital_cluster.label,
+            maturidade: r.intelligence?.maturity_signal.label,
+            insight_maturidade: r.intelligence?.maturity_signal.insight,
+            funcionarios_faixa: r.intelligence?.employee_cluster,
+            faturamento_benchmark: `R$ ${(r.intelligence?.revenue_method1_brl || 0).toLocaleString("pt-BR")}`,
+            faturamento_massa_salarial: `R$ ${(r.intelligence?.revenue_method2_brl || 0).toLocaleString("pt-BR")}`,
+            convergencia_metodos: `${r.intelligence?.convergence_pct}%`,
+            confianca: `${r.intelligence?.confidence_score}%`,
+            situacao_cadastral: r.public_data?.situacao_cadastral,
+            anos_atividade: r.public_data?.years_active,
+            alertas: r.intelligence?.alerts.map(a => `[${a.severity.toUpperCase()}] ${a.message}`),
+          }));
+
           const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -222,15 +368,22 @@ serve(async (req) => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "google/gemini-2.5-flash",
+              model: "google/gemini-3-flash-preview",
               messages: [
                 {
                   role: "system",
-                  content: "Você é um analista de M&A especialista no mercado brasileiro. Analise os dados públicos das empresas e gere uma análise consolidada em português, destacando: empresas mais promissoras, riscos identificados, e recomendações estratégicas. Seja conciso e objetivo.",
+                  content: `Você é um analista sênior de M&A especialista no mercado brasileiro. 
+Receberá dados estruturados pré-analisados de empresas candidatas a aquisição.
+Gere uma análise consolidada em português em 4 seções obrigatórias:
+1. **Visão Geral do Grupo** (2-3 frases sobre o conjunto)
+2. **Destaques Positivos** (top 2-3 empresas mais atrativas e por quê)
+3. **Alertas e Riscos** (principais riscos identificados nos dados)
+4. **Recomendação Final** (ordem de prioridade de aprofundamento)
+Seja objetivo. Use os dados fornecidos, não invente informações.`,
                 },
                 {
                   role: "user",
-                  content: `Dados públicos das top empresas do matching:\n${JSON.stringify(companiesWithData, null, 2)}\n\nGere uma análise consolidada em 3-5 parágrafos cobrindo: visão geral do grupo, destaques positivos, riscos e alertas, e recomendação final.`,
+                  content: `Dados estruturados das empresas pré-selecionadas:\n${JSON.stringify(structuredSummary, null, 2)}`,
                 },
               ],
             }),
@@ -241,7 +394,7 @@ serve(async (req) => {
             aiAnalysis = aiData.choices?.[0]?.message?.content || null;
           }
         } catch {
-          // AI analysis is optional, proceed without it
+          // AI analysis is optional
         }
       }
     }
