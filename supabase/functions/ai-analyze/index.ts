@@ -166,8 +166,55 @@ For EACH company, return a JSON array element with:
 
 Return ONLY a JSON array.`;
 
-        // Store funnel data on data object to include in response
+        // Update funnel data  
         (data as any).__funnel = { received: funnelReceived, pre_filtered: funnelPreFiltered };
+        break;
+      }
+
+      case "match-single": {
+        // Analyze ONE company with AI (on-demand enrichment)
+        const company = data.company || {};
+        const criteria = data.criteria || {};
+        const investorProfile = data.investor_profile || "Moderado";
+        const preDimensions = data.pre_score_dimensions || null;
+
+        systemPrompt = `You are an elite M&A analyst specializing in the Brazilian market. Analyze ONE specific company and return a detailed JSON enrichment. ALL responses and analysis text must be in PORTUGUESE (Brazil).
+
+Return ONLY valid JSON with this structure:
+{
+  "compatibility_score": 0-100,
+  "analysis": "2-3 sentence strategic analysis in Portuguese",
+  "dimensions": {
+    "financial_fit": 0-100,
+    "sector_fit": 0-100,
+    "size_fit": 0-100,
+    "location_fit": 0-100,
+    "risk_fit": 0-100
+  },
+  "dimension_explanations": {
+    "financial_fit": "1 sentence in Portuguese",
+    "sector_fit": "1 sentence in Portuguese",
+    "size_fit": "1 sentence in Portuguese",
+    "location_fit": "1 sentence in Portuguese",
+    "risk_fit": "1 sentence in Portuguese"
+  },
+  "strengths": ["2-3 key strengths in Portuguese"],
+  "weaknesses": ["2-3 key risks/weaknesses in Portuguese"],
+  "recommendation": "One actionable next step in Portuguese"
+}
+
+FINANCIAL_FIT: If no revenue/EBITDA, set financial_fit = 50 (neutral). Do NOT penalize for missing data.
+SECTOR_FIT: Consider CNAE codes, sector adjacency, and strategic synergies.
+INVESTOR PROFILE: ${investorProfile}
+- Agressivo: prioritize growth, synergy, expansion potential
+- Moderado: balance between growth and security
+- Conservador: prioritize stability, low risk, proven track record`;
+
+        userPrompt = `Buyer criteria: ${JSON.stringify(criteria)}
+Company to analyze: ${JSON.stringify(company)}
+${preDimensions ? `Pre-calculated deterministic dimensions (use as baseline, you may refine): ${JSON.stringify(preDimensions)}` : ""}
+
+Return ONLY the JSON enrichment.`;
         break;
       }
 
@@ -271,7 +318,7 @@ Retorne JSON com este formato exato:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: type === "match" ? "google/gemini-3-pro-preview" : "google/gemini-3-flash-preview",
+        model: (type === "match" || type === "match-single") ? "google/gemini-2.5-flash" : "google/gemini-2.5-flash-lite",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
