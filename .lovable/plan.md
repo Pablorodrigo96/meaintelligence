@@ -1,206 +1,196 @@
 
-## Aprofundamento Inteligente das Empresas Pré-Selecionadas
+## Busca Inteligente por Linguagem Natural + Filtro de Subtipo CNAE
 
-### O Problema Atual
+### Diagnóstico dos 3 Problemas
 
-O `DeepDiveDialog` e o edge function `company-deep-dive` já existem, mas são básicos:
-- Estimativa de receita usa apenas: `benchmark_setor × regime_fiscal × capital_ratio × localização`
-- Não há estimativa de funcionários, nem faixa de cluster
-- Não há cálculo de massa salarial estimada
-- Não há análise de maturidade (idade vs. funcionários)
-- A IA recebe os dados brutos e gera um texto genérico sem estrutura
+**Problema 1 — Itaú aparece:**
+O `CNAE_SECTOR_MAP` mapeia prefixos `64` (bancos), `65` (seguros), `66` (auxiliares financeiros), `69` (serviços contábeis/jurídicos) e `70` (consultoria empresarial) para o mesmo setor `"Finance"`. A query no BD filtra apenas por esse setor amplo, sem distinguir banco de consultoria.
 
-### A Nova Arquitetura: Motor de Inteligência de 5 Camadas
+**Problema 2 — Concorrentes não aparecem:**
+A query ordena por `capital_social DESC NULLS LAST`. Grandes bancos têm capital social de bilhões → dominam os primeiros 80 resultados. Consultorias financeiras com capital de R$ 50K–500K ficam na página 5.000 e nunca chegam ao matching.
 
-Cada empresa pré-selecionada passará por 5 layers de análise determinística ANTES da IA:
+**Problema 3 — Sem linguagem natural:**
+O usuário precisa saber o nome exato do setor/porte antes de pesquisar. Não existe forma de dizer "quero empresas parecidas com a minha de gestão financeira" e deixar a IA parametrizar.
+
+---
+
+### Solução: 3 Mudanças Integradas
+
+---
+
+### Mudança 1 — Decomposição do CNAE em Subtipos ("Finance" → 4 subtipos)
+
+Atualmente o setor Finance engloba tudo. Vamos criar um segundo nível de mapeamento:
 
 ```text
-[BrasilAPI: dados do CNPJ]
-        ↓
-Layer 1: Capital Social → Cluster de Porte
-Layer 2: CNAE → Modelo de Negócio + Benchmarks Setoriais
-Layer 3: Idade da Empresa → Sinal de Maturidade/Crescimento
-Layer 4: Estimativa de Funcionários (por faixa)
-Layer 5: Massa Salarial Estimada → Faturamento por Inversão
-        ↓
-[IA: análise qualitativa sobre dados estruturados]
+Finance
+├── Finance:Banking       → CNAE 64xx (bancos, cooperativas de crédito)
+├── Finance:Insurance     → CNAE 65xx (seguros, previdência)
+├── Finance:Markets       → CNAE 66xx (bolsa, fundos, corretoras)
+├── Finance:Consulting    → CNAE 69xx + 70xx (consultoria, contabilidade)
+└── Finance:Other         → demais
 ```
+
+Isso permite que quando o usuário (via IA) diz "gestão financeira / consultoria", o sistema filtre **especificamente** `CNAE 69xx` e `70xx`, excluindo bancos (`64xx`).
+
+O mesmo princípio se aplica a outros setores amplos como Technology (Software vs Hardware vs Telecom).
 
 ---
 
-### Detalhamento de Cada Layer
+### Mudança 2 — Ordenação Inteligente na Query do BD
 
-**Layer 1 — Capital Social → Cluster de Porte**
-```typescript
-function capitalCluster(capital: number): { label: string; tier: number } {
-  if (capital < 10_000)   return { label: "Micro informal", tier: 1 };
-  if (capital < 100_000)  return { label: "Micro estruturada", tier: 2 };
-  if (capital < 500_000)  return { label: "Pequena", tier: 3 };
-  if (capital < 2_000_000) return { label: "Média estruturada", tier: 4 };
-  if (capital < 10_000_000) return { label: "Grande / Tese definida", tier: 5 };
-  return { label: "Corporação", tier: 6 };
-}
+O problema é ordenar por `capital_social DESC`. Isso favorece gigantes.
+
+Novo critério de ordenação: usar `capital_social` relativo ao porte esperado. Para consultorias pequenas, empresas com capital de R$ 50K–2M são mais relevantes que bancos com R$ 10B.
+
+Implementação em `national-search/index.ts`:
+
+Quando `target_sector` inclui subtipo (ex: `Finance:Consulting`), adicionar **filtro hard** pelos prefixos CNAE exatos e **limitar capital_social máximo** para evitar que corporações dominem:
+
+```sql
+-- Antes (genérico):
+ORDER BY em.capital_social DESC NULLS LAST
+
+-- Depois (com faixa de capital relevante):
+-- Se buyer_revenue informado (ex: R$ 5M), buscar empresas com capital entre 5% e 500% do buyer
+-- Isso elimina o Itaú automaticamente (capital R$ 100B vs buyer R$ 5M = fora de faixa)
+ORDER BY ABS(LOG(em.capital_social + 1) - LOG($target_capital + 1)) ASC NULLS LAST
+-- Ordena por quem tem capital_social mais próximo do target
 ```
 
-**Layer 2 — CNAE → Modelo de Negócio**
-
-Expansão dos benchmarks setoriais com 3 métricas por setor:
-- `payroll_pct`: % da receita representado pela folha salarial
-- `rev_per_employee`: receita por funcionário (em R$)
-- `margin_profile`: "alta margem", "margem baixa / giro alto", "previsível", etc.
-
-```typescript
-const CNAE_BUSINESS_MODEL: Record<string, {
-  payroll_pct: number;
-  rev_per_employee: number;
-  margin_profile: string;
-  model_label: string;
-}> = {
-  "Tecnologia":   { payroll_pct: 0.40, rev_per_employee: 500_000, margin_profile: "Alta margem", model_label: "Software / SaaS" },
-  "Comércio":     { payroll_pct: 0.12, rev_per_employee: 200_000, margin_profile: "Margem baixa, giro alto", model_label: "Distribuição / Varejo" },
-  "Indústria":    { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Capital intensivo", model_label: "Produção industrial" },
-  "Saúde":        { payroll_pct: 0.35, rev_per_employee: 180_000, margin_profile: "Estável regulado", model_label: "Serviços de saúde" },
-  "Logística":    { payroll_pct: 0.25, rev_per_employee: 200_000, margin_profile: "Margem operacional apertada", model_label: "Transporte / Armazenagem" },
-  "Agronegócio":  { payroll_pct: 0.15, rev_per_employee: 300_000, margin_profile: "Cíclico / Commodity", model_label: "Produção agrícola" },
-  "Finanças":     { payroll_pct: 0.30, rev_per_employee: 400_000, margin_profile: "Alta alavancagem", model_label: "Serviços financeiros" },
-  "Educação":     { payroll_pct: 0.45, rev_per_employee: 120_000, margin_profile: "Escala de alunos", model_label: "Ensino e treinamento" },
-  "Construção":   { payroll_pct: 0.22, rev_per_employee: 220_000, margin_profile: "Ciclo longo", model_label: "Incorporação / Obras" },
-  "Energia":      { payroll_pct: 0.18, rev_per_employee: 350_000, margin_profile: "Capital intensivo regulado", model_label: "Geração / Distribuição" },
-  "Imobiliário":  { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Ciclo longo / Ativo intensivo", model_label: "Gestão imobiliária" },
-  "Serviços":     { payroll_pct: 0.38, rev_per_employee: 150_000, margin_profile: "Serviço profissional", model_label: "Prestação de serviços" },
-};
-```
-
-**Layer 3 — Idade da Empresa → Sinal de Maturidade**
-
-Cruzamento entre anos de existência e porte para classificar a empresa:
-```typescript
-function maturitySignal(yearsActive: number, capitalTier: number): {
-  signal: "crescimento_acelerado" | "maturidade_consolidada" | "estagnacao_estrutural" | "startup_nascente";
-  label: string;
-  insight: string;
-}
-```
-
-- < 3 anos, tier 4+: "Crescimento acelerado — alto potencial, alto risco"
-- > 15 anos, tier 2-3: "Estagnação estrutural — cuidado com EBITDA"
-- 5-15 anos, tier 3-5: "Maturidade consolidada — perfil ideal para M&A"
-- < 2 anos qualquer: "Empresa nascente — DD aprofundada necessária"
-
-**Layer 4 — Estimativa de Funcionários por Faixa**
-
-Derivado do cruzamento: capital social + setor + localização:
-```typescript
-// rev_per_employee do setor → funcionários estimados
-const estimatedEmployees = estimatedRevenue / sectorModel.rev_per_employee;
-
-// Enquadrar na faixa de cluster
-function employeeCluster(n: number): string {
-  if (n < 10)  return "1–10";
-  if (n < 30)  return "10–30";
-  if (n < 80)  return "30–80";
-  if (n < 200) return "80–200";
-  if (n < 500) return "200–500";
-  return "500+";
-}
-```
-
-**Layer 5 — Massa Salarial → Faturamento por Inversão**
-
-O método mais inteligente, conforme descrito pelo usuário:
-```typescript
-const salarioMedioSetor: Record<string, number> = {
-  "Tecnologia": 8_000,
-  "Comércio": 2_500,
-  "Saúde": 4_500,
-  // ...
-};
-
-// Estimativa por massa salarial
-const avgSalary = salarioMedioSetor[sector];
-const estimatedEmployeesCount = estimatedEmployees; // do layer 4
-const monthlyPayroll = avgSalary * estimatedEmployeesCount;
-const annualPayroll = monthlyPayroll * 12;
-const revenueFromPayroll = annualPayroll / sectorModel.payroll_pct;
-
-// Score de confiança cruzado (dois métodos)
-const revMethod1 = estimatedRevenueBenchmark; // método antigo
-const revMethod2 = revenueFromPayroll;        // método novo (massa salarial)
-const convergence = Math.abs(revMethod1 - revMethod2) / Math.max(revMethod1, revMethod2);
-// convergence < 0.3 → alta confiança (os dois métodos concordam)
-```
+Alternativamente (mais simples): adicionar filtro `capital_social BETWEEN min AND max` calculado com base no faturamento do comprador que a IA vai informar.
 
 ---
 
-### O que será alterado
+### Mudança 3 — Campo de Linguagem Natural com IA como Parametrizador
 
-**1. `supabase/functions/company-deep-dive/index.ts`**
+Adicionar um novo campo no wizard Step 1: **"Descreva o que você procura"** (textarea livre).
 
-Adicionar as 5 layers determinísticas antes da IA:
+Quando o usuário escreve: *"Sou uma consultoria de gestão financeira faturando 5M/ano. Quero outras consultorias financeiras menores que possam ser complementares ou que eu possa adquirir."*
 
-- Expandir `SECTOR_BENCHMARKS` com `CNAE_BUSINESS_MODEL` (payroll_pct, rev_per_employee, margin_profile, model_label)
-- Adicionar tabela de salários médios por setor `AVG_SALARY_BY_SECTOR`
-- Implementar funções: `capitalCluster()`, `maturitySignal()`, `employeeCluster()`, `calcMassaSalarial()`
-- Retornar novo objeto `intelligence` por empresa com todos os layers calculados
-- Atualizar o prompt da IA para usar os dados estruturados (não mais dados brutos) e gerar análise em seções específicas: Porte Real, Maturidade, Estimativas Financeiras, Sinais de Alerta
+A IA (chamada via `ai-analyze` com novo tipo `"parse-intent"`) extrai:
+- `target_sector`: `"Finance:Consulting"` 
+- `target_size`: `"Small"` / `"Startup"`
+- `max_capital_social`: R$ 5M (evita gigantes)
+- `buyer_revenue`: R$ 5M (âncora para filtragem de porte)
+- `intent`: `"acquisition"` vs `"partnership"`
+- `cnae_subtype_filter`: `["69", "70"]` (exclui `64`, `65`, `66`)
 
-**2. `src/components/DeepDiveDialog.tsx`**
-
-Expandir a interface TypeScript para incluir o novo campo `intelligence`:
-```typescript
-interface Intelligence {
-  capital_cluster: { label: string; tier: number };
-  employee_cluster: string;
-  estimated_employees: number;
-  maturity_signal: { signal: string; label: string; insight: string };
-  business_model: { model_label: string; margin_profile: string; payroll_pct: number };
-  revenue_method1_brl: number;  // benchmark setorial
-  revenue_method2_brl: number;  // inversão massa salarial
-  monthly_payroll_brl: number;
-  annual_payroll_brl: number;
-  convergence_pct: number;      // % de divergência entre os 2 métodos
-  confidence_score: number;
-}
-```
-
-Redesenhar o card de cada empresa com seções visuais:
-
-- **Seção "Radiografia da Empresa"**: capital cluster (badge colorido por tier), maturidade (badge com ícone de sinal), modelo de negócio
-- **Seção "Estimativa de Equipe"**: faixa de funcionários em destaque visual + salário médio estimado + massa salarial mensal
-- **Seção "Estimativa de Faturamento (2 métodos)"**: lado a lado, Método 1 (Benchmark Setorial) vs Método 2 (Inversão Massa Salarial), com indicador de convergência
-- **Seção "Sinais de Alerta"**: ícones coloridos por criticidade (ex: "Empresa antiga com capital baixo → risco de estagnação")
+Esses parâmetros são preenchidos automaticamente nos campos do formulário E passados para o `national-search` como filtros adicionais.
 
 ---
 
-### Nova UI do DeepDiveDialog
+### Detalhamento das Alterações por Arquivo
+
+**1. `supabase/functions/ai-analyze/index.ts`**
+
+Adicionar novo case `"parse-intent"`:
+
+```typescript
+case "parse-intent": {
+  systemPrompt = `Você é um especialista em M&A brasileiro. O usuário vai descrever com linguagem informal o que procura em uma aquisição. Extraia os parâmetros de busca e retorne JSON estruturado.`;
+  
+  userPrompt = `Texto do usuário: "${data.text}"
+  
+  Retorne JSON:
+  {
+    "target_sector": "Finance|Technology|Healthcare|...",
+    "cnae_subtype": "Banking|Insurance|Consulting|Software|...",
+    "cnae_prefixes": ["64", "65"] // prefixos CNAE para filtrar no BD,
+    "target_size": "Startup|Small|Medium|Large|Enterprise",
+    "buyer_revenue_brl": 5000000, // faturamento declarado pelo usuário,
+    "max_capital_social_brl": 5000000, // capital máximo para evitar gigantes,
+    "min_capital_social_brl": 10000,
+    "intent": "acquisition|partnership|synergy",
+    "suggested_notes": "frase descritiva para contextualizar a IA de matching"
+  }`;
+  break;
+}
+```
+
+**2. `supabase/functions/national-search/index.ts`**
+
+Adicionar suporte a `cnae_prefixes` e `capital_range` no body:
+
+```typescript
+const {
+  target_sector,
+  target_state,
+  target_size,
+  cnae_prefixes,        // NOVO: array de prefixos específicos ex: ["69", "70"]
+  min_capital_social,   // NOVO: âncora de tamanho do comprador
+  max_capital_social,   // NOVO: evitar gigantes irrelevantes
+  raw = false,
+  limit,
+} = body;
+
+// CNAE filter por prefixo exato (sobrescreve o filtro de setor genérico)
+if (cnae_prefixes && cnae_prefixes.length > 0) {
+  const cnaeLikes = cnae_prefixes.map((p: string) => `e.cnae_fiscal_principal LIKE '${p}%'`).join(" OR ");
+  conditions.push(`(${cnaeLikes})`);
+} else if (target_sector) {
+  // fallback: filtro genérico de setor
+  ...
+}
+
+// Capital range filter (evita o Itaú aparecer)
+if (max_capital_social) {
+  params.push(String(max_capital_social));
+  conditions.push(`em.capital_social <= $${params.length}`);
+}
+if (min_capital_social) {
+  params.push(String(min_capital_social));
+  conditions.push(`em.capital_social >= $${params.length}`);
+}
+```
+
+E mudar a ordenação para priorizar por proximidade de capital (quando disponível) ao invés de apenas `DESC`:
+
+```sql
+ORDER BY em.capital_social DESC NULLS LAST
+-- substituído por:
+ORDER BY ABS(em.capital_social - $target_capital) ASC NULLS LAST
+```
+
+**3. `src/pages/Matching.tsx`**
+
+Adicionar no Wizard Step 1 um card de **Linguagem Natural**:
+
+- Textarea: "Descreva o que você procura (ex: quero consultorias financeiras pequenas para aquisição)"
+- Botão: "Deixar IA parametrizar" → chama `ai-analyze` com `type: "parse-intent"` 
+- Ao retornar, preenche automaticamente os campos: setor, porte, notas estratégicas
+- Mostra um resumo visual: "A IA entendeu: Consultoria Financeira (CNAE 69xx/70xx), Pequenas, Capital < R$ 5M"
+- Badge de confirmação com opção de editar manualmente
+
+Também adicionar ao `runMatchMutation`: passar `cnae_prefixes`, `min_capital_social`, `max_capital_social` extraídos pelo parse-intent para a chamada do `national-search`.
+
+---
+
+### Nova UX do Wizard Step 1
 
 ```text
-┌──────────────────────────────────────────────────────────┐
-│  EMPRESA XYZ LTDA  ●  ATIVA  ●  CNPJ: 12.345.678/0001-99 │
-├──────────────────────────────────────────────────────────┤
-│  RADIOGRAFIA                                              │
-│  [Pequena estruturada]  [Maturidade consolidada ●12 anos] │
-│  Modelo: Software / SaaS  ·  Margem: Alta                 │
-├──────────────────────────────────────────────────────────┤
-│  ESTIMATIVA DE EQUIPE                                     │
-│  Faixa: 30–80 funcionários                               │
-│  Salário médio setor: R$ 8.000/mês                       │
-│  Massa salarial estimada: R$ 400.000/mês                  │
-├──────────────────────────────────────────────────────────┤
-│  FATURAMENTO (2 MÉTODOS)                                  │
-│  Método 1 — Benchmark:     R$ 5.000.000/ano              │
-│  Método 2 — Massa Salarial: R$ 6.000.000/ano             │
-│  Convergência: 83% ●● Alta confiança                      │
-├──────────────────────────────────────────────────────────┤
-│  ANÁLISE IA                                               │
-│  "Esta empresa apresenta perfil de crescimento...         │
-│   Pontos de atenção: ... Recomendação: ..."               │
-└──────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│  💬 DESCREVA O QUE VOCÊ PROCURA (opcional)         │
+│                                                    │
+│  "Tenho uma consultoria financeira faturando       │
+│   R$5M/ano e quero empresas similares para         │
+│   adquirir ou fazer parceria..."                   │
+│                                           [Analisar]│
+├────────────────────────────────────────────────────┤
+│  ✅ IA PARAMETRIZOU (clique para editar)            │
+│  Setor: Consultoria Financeira (CNAE 69xx/70xx)    │
+│  Porte: Startup a Pequena                          │
+│  Capital alvo: R$ 50K – R$ 5M                     │
+│  Intenção: Aquisição                               │
+└────────────────────────────────────────────────────┘
+
+[Perfil Investidor] continua igual abaixo...
 ```
 
 ---
 
 ### Arquivos a modificar
 
-1. `supabase/functions/company-deep-dive/index.ts` — 5 layers de inteligência + prompt IA estruturado
-2. `src/components/DeepDiveDialog.tsx` — nova interface TypeScript + redesign visual dos cards
+1. `supabase/functions/ai-analyze/index.ts` — novo case `"parse-intent"` para extrair parâmetros de linguagem natural
+2. `supabase/functions/national-search/index.ts` — suporte a `cnae_prefixes`, `min_capital_social`, `max_capital_social` + ordenação por proximidade de capital
+3. `src/pages/Matching.tsx` — card de linguagem natural no Step 1, chamada ao parse-intent, preenchimento automático dos filtros, passagem de parâmetros extras ao national-search
