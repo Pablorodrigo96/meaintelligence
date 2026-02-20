@@ -59,22 +59,6 @@ function mapPorteToSize(porte: string | null): string {
   return "Small";
 }
 
-// Receita Federal municipality codes for major cities
-// The RF uses a sequential code different from IBGE
-const RF_MUNICIPIO_MAP: Record<string, string> = {
-  "7107": "São Paulo", "6477": "São Paulo", "6569": "São Paulo",
-  "9999": "São Paulo", "7071": "São Paulo",
-  "6001": "Porto Alegre", "6000": "Brasília", "5983": "Curitiba",
-  "5991": "Fortaleza", "6003": "Recife", "6019": "Salvador",
-  "6007": "Belo Horizonte", "6023": "Manaus", "6015": "Belém",
-  "6011": "Goiânia", "6029": "São Luís", "6031": "Natal",
-  "6033": "Teresina", "6037": "Campo Grande", "6039": "Cuiabá",
-  "6043": "Aracaju", "6045": "Maceió", "6047": "João Pessoa",
-  "6049": "Porto Velho", "6051": "Macapá", "6055": "Palmas",
-  "6057": "Rio Branco", "6059": "Boa Vista",
-  // Rio de Janeiro
-  "6001": "Rio de Janeiro",
-};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -139,25 +123,6 @@ serve(async (req) => {
 
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
-    // Check if municipios table exists for city name resolution
-    let municipioMap: Record<string, string> = { ...RF_MUNICIPIO_MAP };
-    try {
-      const municipiosCheck = await client.queryObject(`
-        SELECT EXISTS (
-          SELECT 1 FROM information_schema.tables 
-          WHERE table_schema = 'public' AND table_name = 'municipios'
-        ) as exists
-      `);
-      const hasTable = (municipiosCheck.rows[0] as any)?.exists;
-      if (hasTable) {
-        const muniResult = await client.queryObject(`SELECT codigo, descricao FROM municipios LIMIT 6000`);
-        for (const row of muniResult.rows as any[]) {
-          municipioMap[String(row.codigo)] = row.descricao;
-        }
-      }
-    } catch (_) {
-      // No municipios table, use built-in map
-    }
 
     const query = `
       SELECT 
@@ -192,7 +157,7 @@ serve(async (req) => {
       const cnpj = String(row.cnpj_completo || row.cnpj_basico || "").replace(/\D/g, "");
       const capitalSocial = parseFloat(row.capital_social) || null;
       const municipioCod = String(row.municipio || "");
-      const cityName = municipioMap[municipioCod] || municipioCod;
+      const cityName = RF_MUNICIPIOS[municipioCod] || municipioCod;
 
       return {
         id: cnpj || `ext_${Math.random().toString(36).substr(2, 9)}`,
