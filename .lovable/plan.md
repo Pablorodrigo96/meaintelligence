@@ -1,224 +1,119 @@
 
-## Reestruturação do Matching: IA Apenas para Enriquecimento Individual
+## Problema Real: 25 CNPJs da Mesma Empresa
 
-### Diagnóstico do Problema de Custo
+### Diagnóstico Definitivo
 
-Hoje a IA é chamada em **3 momentos** a cada busca, sendo 2 deles desnecessários e caros:
+**Causa 1 — Sem deduplicação por empresa no BD:**
+A query do `national-search` faz `INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico`. A tabela `estabelecimentos` tem uma linha por filial/estabelecimento. A Telefônica tem centenas de estabelecimentos ativos no RS (cada agência, torre, ponto de presença = 1 linha). Com `LIMIT 80` sem `GROUP BY cnpj_basico`, os 80 resultados são todos estabelecimentos da mesma empresa. No frontend, o `scoreCompanyLocal` recebe 80 Telefônicas e ordena as top 25 — todas Telefônica.
 
-**Chamada 1 — `parse-intent` (LLM para extrair CNAE do texto):**
-Usa um LLM completo apenas para mapear texto como "consultoria financeira" → CNAE prefixes `["69", "70"]`. Esse mapeamento é 100% determinístico e pode ser feito com um simples lookup de palavras-chave em código.
+**Causa 2 — CNAE `61` inclui gigantes sem filtro de capital:**
+"Provedor de internet" mapeia para CNAE `61xx` (Telecom). Sem `buyer_revenue_brl` informado (o usuário não digitou faturamento no campo de linguagem natural), `max_capital_social` fica `null`. A ordenação cai para `ORDER BY em.capital_social DESC NULLS LAST` — e a Telefônica (capital social bilionário) domina o topo.
 
-**Chamada 2 — `type: "match"` com 25 empresas (o maior custo):**
-O `ai-analyze` recebe 25 empresas completas com todos os dados e pede ao LLM que gere, para cada uma: `analysis`, `dimensions` (5 scores), `dimension_explanations` (5 textos), `strengths` (2-3 itens), `weaknesses` (2-3 itens), `recommendation`. Isso representa centenas de tokens de OUTPUT por empresa × 25 empresas = payload massivo a cada busca. Toda essa pontuação pode ser feita deterministicamente.
-
-**Chamada 3 — `company-deep-dive` quando o usuário clica em "Aprofundar":**
-IA enriquece UMA empresa específica com dados da BrasilAPI. Este é o **uso legítimo** — IA a pedido, sobre dado específico, gerando valor real.
+**Causa 3 — Deduplicação ausente também no frontend:**
+Mesmo que viessem 80 empresas diferentes do BD, o scoring local não tem lógica de deduplicação por `cnpj_basico` (empresa-mãe).
 
 ---
 
-### A Nova Arquitetura: 100% Determinístico → IA Sob Demanda
+### Três Correções Cirúrgicas
 
-```text
-ANTES (3 chamadas de IA por busca):
-NL Text → [LLM parse-intent] → filtros
-                                  ↓
-national-search → 80 empresas → [LLM 25 empresas] → scores + análises
-                                                         ↓
-                                              Usuário clica → [LLM deep-dive]
+---
 
-DEPOIS (0 chamadas de IA na busca, 1 sob demanda):
-NL Text → [lookup determinístico] → filtros
-                                  ↓
-national-search → 80 empresas → [pré-score determinístico] → top 15 exibidos
-                                                         ↓
-                                 Usuário clica "Ver análise IA" → [LLM deep-dive]
+**Correção 1 — Deduplicação por `cnpj_basico` na query do BD (mais importante)**
+
+Trocar a query atual para selecionar apenas **1 estabelecimento por empresa** (`DISTINCT ON (e.cnpj_basico)`), pegando o estabelecimento sede (ou o mais relevante por tipo):
+
+```sql
+-- ANTES: retorna múltiplos estabelecimentos da mesma empresa
+SELECT e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv, ...
+FROM estabelecimentos e
+INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
+WHERE ...
+ORDER BY em.capital_social DESC
+
+-- DEPOIS: 1 empresa = 1 resultado (deduplicado)
+SELECT DISTINCT ON (e.cnpj_basico) 
+  e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv, ...
+FROM estabelecimentos e
+INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
+WHERE ...
+ORDER BY e.cnpj_basico, [critério de proximidade de capital]
 ```
 
+`DISTINCT ON (e.cnpj_basico)` garante que cada empresa apareça **1 única vez**, independente de quantos estabelecimentos tenha. O `ORDER BY` dentro do `DISTINCT ON` controla qual estabelecimento representa a empresa (o mais relevante por localização/tipo).
+
+Esta única mudança elimina o problema dos 25 Telefônicas.
+
 ---
 
-### Mudanças Concretas por Arquivo
+**Correção 2 — Filtro de capital social padrão para Telecom (e outros setores com gigantes)**
 
----
-
-**1. `src/pages/Matching.tsx` — Substituir `parse-intent` por lookup local**
-
-A função `parseIntent()` (linha 638) hoje chama `ai-analyze` via Supabase. Será substituída por uma função local em TypeScript que faz lookup de palavras-chave:
+Quando o usuário pesquisa por provedor de internet/telecom sem informar faturamento, não há âncora para calcular `max_capital_social`. A solução é adicionar **caps de capital por setor** no `national-search`:
 
 ```typescript
-// ANTES: chamada de IA
-const { data } = await supabase.functions.invoke("ai-analyze", {
-  body: { type: "parse-intent", data: { text: nlText } },
-});
+// Capital social máximo padrão por setor (evita gigantes sem âncora de buyer)
+const SECTOR_DEFAULT_MAX_CAPITAL: Record<string, number> = {
+  "Telecom": 50_000_000,      // R$50M — exclui Vivo/Claro/TIM (capital >R$1B)
+  "Finance": 100_000_000,     // R$100M — exclui Itaú, Bradesco
+  "Energy": 200_000_000,      // R$200M — exclui Petrobras, Eletrobras
+  "Manufacturing": 500_000_000,
+  // outros setores: sem cap padrão (são mais fragmentados)
+};
+```
 
-// DEPOIS: lookup local, zero custo, zero latência
-function parseIntentLocal(text: string): ParsedIntent {
-  const lower = text.toLowerCase();
-  
-  const KEYWORD_MAP = [
-    { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro"],
-      cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
-    { keywords: ["banco", "financeira", "crédito", "empréstimo"],
-      cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking" },
-    { keywords: ["seguro", "previdência", "seguradora"],
-      cnae_prefixes: ["65"], sector: "Finance", subtype: "Insurance" },
-    { keywords: ["software", "tecnologia", "ti ", "sistemas", "saas", "startup de tech"],
-      cnae_prefixes: ["62", "63"], sector: "Technology", subtype: "Software" },
-    { keywords: ["saúde", "clínica", "hospital", "farmácia", "laboratório"],
-      cnae_prefixes: ["86", "87", "88"], sector: "Healthcare", subtype: "Health" },
-    { keywords: ["educação", "escola", "ensino", "cursos", "treinamento"],
-      cnae_prefixes: ["85"], sector: "Education", subtype: "Education" },
-    { keywords: ["construção", "incorporação", "obra", "imóvel"],
-      cnae_prefixes: ["41", "42", "43"], sector: "Real Estate", subtype: "Construction" },
-    { keywords: ["logística", "transporte", "frete", "distribuição"],
-      cnae_prefixes: ["49", "50", "51", "52"], sector: "Logistics", subtype: "Logistics" },
-    { keywords: ["comércio", "varejo", "loja", "venda"],
-      cnae_prefixes: ["45", "46", "47"], sector: "Retail", subtype: "Retail" },
-    { keywords: ["agro", "agricultura", "pecuária", "fazenda"],
-      cnae_prefixes: ["01", "02", "03"], sector: "Agribusiness", subtype: "Agro" },
-    { keywords: ["energia", "elétrica", "solar", "geração"],
-      cnae_prefixes: ["35"], sector: "Energy", subtype: "Energy" },
-    { keywords: ["telecom", "telecomunicações", "internet", "fibra"],
-      cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom" },
-  ];
+Se `max_capital_social` não vier do body **e** o setor tiver um cap padrão, aplicar automaticamente. Isso garante que provedores regionais de internet (capital R$50K–R$10M) apareçam, e não a Vivo.
 
-  // Extrair faturamento: "fatura 5M", "faturamento de 2 milhões", "R$3mi"
-  const revenueMatch = lower.match(/r?\$?\s*(\d+[\.,]?\d*)\s*(m|mi|milhão|milhões|k|mil|b|bi|bilh)/i);
-  let buyerRevenueBrl: number | null = null;
-  if (revenueMatch) {
-    const val = parseFloat(revenueMatch[1].replace(",", "."));
-    const unit = revenueMatch[2].toLowerCase();
-    if (unit.startsWith("b")) buyerRevenueBrl = val * 1e9;
-    else if (unit.startsWith("m")) buyerRevenueBrl = val * 1e6;
-    else if (unit.startsWith("k") || unit.startsWith("mil")) buyerRevenueBrl = val * 1e3;
+---
+
+**Correção 3 — Deduplicação adicional no frontend por `cnpj_basico`**
+
+Como camada extra de segurança, antes do `scoreCompanyLocal`, adicionar deduplicação no `runMatchMutation`:
+
+```typescript
+// Deduplicar por empresa-mãe (cnpj_basico = primeiros 8 dígitos do CNPJ)
+const dedupedCompanies = companiesToAnalyze.reduce((acc: any[], company: any) => {
+  const baseCnpj = String(company.cnpj || "").replace(/\D/g, "").substring(0, 8);
+  if (!baseCnpj || acc.some(c => String(c.cnpj || "").replace(/\D/g, "").substring(0, 8) === baseCnpj)) {
+    return acc; // duplicata: pula
   }
-
-  const matched = KEYWORD_MAP.find(entry =>
-    entry.keywords.some(kw => lower.includes(kw))
-  );
-
-  const maxCapital = buyerRevenueBrl ? buyerRevenueBrl * 0.5 : null;
-  const minCapital = 10_000;
-
-  return {
-    target_sector: matched?.sector || null,
-    cnae_prefixes: matched?.cnae_prefixes || [],
-    cnae_subtype: matched?.subtype || null,
-    target_size: lower.includes("startup") ? "Startup" : lower.includes("pequen") ? "Small" : lower.includes("médi") ? "Medium" : "Small",
-    buyer_revenue_brl: buyerRevenueBrl,
-    max_capital_social_brl: maxCapital,
-    min_capital_social_brl: minCapital,
-    intent: lower.includes("adquir") || lower.includes("comprar") ? "acquisition" : lower.includes("parceri") ? "partnership" : "acquisition",
-    human_readable_summary: `${matched?.subtype || matched?.sector || "Empresa"} (CNAE ${matched?.cnae_prefixes?.map(p => `${p}xx`).join("/") || "N/A"}) · ${buyerRevenueBrl ? `Capital até R$${(maxCapital! / 1e6).toFixed(1)}M` : ""}`,
-  };
-}
+  return [...acc, company];
+}, []);
 ```
 
-**2. `src/pages/Matching.tsx` — Substituir LLM de matching por scoring determinístico local**
+Isso garante que mesmo se o BD retornar 2-3 estabelecimentos da mesma empresa (por bug ou race condition), o frontend exibirá apenas 1.
 
-O `runMatchMutation` (linha 332) hoje chama `ai-analyze` type `"match"` e recebe análise completa de 25 empresas. Será reescrito para:
+---
 
-1. Buscar as empresas via `national-search` (mantém, sem IA)
-2. Aplicar o pré-score determinístico **localmente no frontend** (já existe a lógica no `ai-analyze`, só move para o cliente)
-3. Calcular os 5 scores de dimensão deterministicamente (setor, porte, estado, capital, CNAE)
-4. Calcular `compatibility_score` com os pesos por perfil de investidor
-5. Exibir os resultados **sem chamar LLM nenhum**
+### Mudança no KEYWORD_MAP: Telecom → Provedores Regionais
 
-O score determinístico funciona assim:
+O CNAE `61` engloba tanto a Vivo (grande) quanto provedores regionais (pequenos). Uma melhoria adicional: separar "provedor de internet" de "telecom grande" no keyword map:
+
 ```typescript
-function scoreCompany(company, criteria, investorProfile, cnae_prefixes) {
-  // sector_fit
-  const sectorExact = company.sector === criteria.target_sector;
-  const sectorAdjacent = SECTOR_ADJACENCY[criteria.target_sector]?.includes(company.sector);
-  const cnaeBonus = cnae_prefixes.some(p => company.description?.includes(`CNAE: ${p}`));
-  const sector_fit = sectorExact ? 90 : sectorAdjacent ? 65 : cnaeBonus ? 70 : 30;
+// ANTES (um único entry para telecom):
+{ keywords: ["telecom", "telecomunicações", "internet", "fibra", "provedor"], 
+  cnae_prefixes: ["61"], sector: "Telecom" }
 
-  // size_fit
-  const sizeOrder = ["Startup","Small","Medium","Large","Enterprise"];
-  const diff = Math.abs(sizeOrder.indexOf(company.size) - sizeOrder.indexOf(criteria.target_size));
-  const size_fit = diff === 0 ? 95 : diff === 1 ? 75 : diff === 2 ? 50 : 25;
-
-  // location_fit
-  const location_fit = company.state === criteria.target_state ? 90 : 50;
-
-  // financial_fit (sem dados = neutro)
-  const financial_fit = company.revenue ? 65 : 50;
-
-  // risk_fit
-  const risk_fit = 60; // neutro sem dados reais
-
-  // Pesos por perfil
-  const weights = PROFILE_WEIGHTS[investorProfile];
-  const compatibility_score = Math.round(
-    sector_fit * weights.sector +
-    size_fit * weights.size +
-    financial_fit * weights.financial +
-    location_fit * weights.location +
-    risk_fit * weights.risk
-  );
-
-  return { compatibility_score, dimensions: { sector_fit, size_fit, location_fit, financial_fit, risk_fit } };
-}
+// DEPOIS (dois entries com prioridade):
+{ keywords: ["provedor de internet", "isp", "fibra óptica", "internet residencial", "internet empresarial"],
+  cnae_prefixes: ["6110", "6120", "6130", "6141", "6142", "6143", "6190"],  // CNAE 4 dígitos mais específico
+  sector: "Telecom", subtype: "ISP",
+  default_max_capital: 50_000_000 },
+{ keywords: ["telecom", "telecomunicações"],
+  cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom" },
 ```
 
-Os resultados são exibidos imediatamente. Sem IA, sem espera, sem custo.
-
-**3. `src/pages/Matching.tsx` — Botão "Ver análise IA" por empresa individual**
-
-Em vez de análise automática de todas as 25, adicionar botão **por empresa** no card de resultado:
-
-```text
-┌─────────────────────────────────────────────┐
-│ EMPRESA XYZ LTDA              Score: 82%    │
-│ Consultoria · SP · Pequena                  │
-│ ████████████████████░ 82                   │
-│                                             │
-│ [Shortlist] [Ignorar] [Ver análise IA ✦]   │
-└─────────────────────────────────────────────┘
-```
-
-O botão "Ver análise IA ✦" chama o **`company-deep-dive`** (que já existe) ou uma versão reduzida do `ai-analyze` para **aquela empresa específica** — 1 empresa, 1 chamada, sob demanda.
-
-**4. Remover `type: "match"` do `ai-analyze/index.ts`**
-
-O case `"match"` inteiro pode ser removido ou desativado. Toda sua lógica determinística (pré-score, adjacência, pesos por perfil) migra para o frontend em TypeScript puro.
-
-**5. Manter `parse-intent` como fallback no `ai-analyze`**
-
-O case `"parse-intent"` pode ser mantido no edge function mas **não será mais chamado automaticamente**. Será chamado apenas se o lookup local falhar em encontrar CNAE (ou seja: usuário descreve algo muito incomum que o lookup não cobre). Isso vira exceção, não regra.
+Isso permite distinguir um provedor regional de internet (CNAE 6141-6/00, 6142-4/00) de uma operadora nacional.
 
 ---
 
-### O que muda na UX
+### Resumo das Mudanças por Arquivo
 
-**Antes:**
-- Usuário preenche texto → aguarda IA (3-5s)
-- Clica "Iniciar Matching" → aguarda IA analisar 25 empresas (15-30s)
-- Resultados aparecem com análise completa
+**1. `supabase/functions/national-search/index.ts`**
+- Adicionar `DISTINCT ON (e.cnpj_basico)` na query SQL — garante 1 resultado por empresa
+- Adicionar `SECTOR_DEFAULT_MAX_CAPITAL`: caps de capital automáticos por setor quando `max_capital_social` não for informado
+- Ajustar o `ORDER BY` para ser compatível com `DISTINCT ON`: `ORDER BY e.cnpj_basico, ABS(...) ASC`
+- Aumentar `effectiveLimit` para `200` quando há deduplicação (para compensar o filtro `DISTINCT`)
 
-**Depois:**
-- Usuário preenche texto → resultado instantâneo (lookup local, 0s)
-- Clica "Iniciar Matching" → resultados aparecem em ~3s (só `national-search`, sem IA)
-- Usuário clica "Ver análise IA" em 1-3 empresas interessantes → IA processa só essa, 5-8s
-
-**Custo de IA por sessão de busca:**
-- Antes: 1 chamada de `parse-intent` + 1 chamada de `match` (25 empresas) = ~15.000 tokens por busca
-- Depois: 0 chamadas na busca + 1 chamada por empresa que o usuário quer analisar (~1.500 tokens)
-- Redução: **~90% de custo de IA eliminado**
-
----
-
-### Arquivos a Modificar
-
-1. **`src/pages/Matching.tsx`** — principal:
-   - Substituir `parseIntent()` por `parseIntentLocal()` (sem IA)
-   - Reescrever `runMatchMutation` para scoring determinístico local (sem `ai-analyze`)
-   - Adicionar botão "Ver análise IA" por empresa individual
-   - Adicionar função `analyzeOneCompany(company)` que chama IA para 1 empresa
-
-2. **`supabase/functions/ai-analyze/index.ts`** — simplificar:
-   - Adicionar case `"match-single"` para analisar 1 empresa específica (substitui o `"match"` com 25)
-   - Manter `"parse-intent"` como fallback mas não chamar por padrão
-   - O case `"match"` original pode ser mantido para compatibilidade ou removido
-
-3. **`supabase/functions/company-deep-dive/index.ts`** — avaliar:
-   - Se o `"match-single"` for leve o suficiente, o Deep Dive só é chamado para análise de 5 camadas (BrasilAPI + inteligência profunda), mantendo-o como funcionalidade premium separada
+**2. `src/pages/Matching.tsx`**
+- Adicionar deduplicação por `cnpj_basico` no `runMatchMutation` antes do scoring (Correção 3)
+- Melhorar `KEYWORD_MAP`: separar "provedor de internet/ISP" de "telecom" com CNAE 4 dígitos mais específicos
+- Adicionar `default_max_capital` por entrada do `KEYWORD_MAP`, passado como `max_capital_social` para o `national-search` quando `buyer_revenue_brl` não for informado
