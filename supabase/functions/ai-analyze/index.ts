@@ -21,6 +21,29 @@ serve(async (req) => {
         const investorProfile = data.investor_profile || "Moderado";
         const riskLevel = data.criteria?.risk_level || "";
         const notes = data.criteria?.notes || "";
+        const criteria = data.criteria || {};
+
+        // ── LAYER 2: Deterministic pre-score (no AI, runs in milliseconds) ──
+        const allCompanies: any[] = data.companies || [];
+        const preScored = allCompanies.map((c: any) => {
+          let score = 0;
+          if (criteria.target_sector && c.sector === criteria.target_sector) score += 40;
+          if (criteria.target_size && c.size === criteria.target_size) score += 20;
+          if (criteria.target_state && c.state === criteria.target_state) score += 20;
+          if (c.revenue || c.capital_social) score += 10;
+          if (c.cnpj && String(c.cnpj).replace(/\D/g, "").length >= 14) score += 10;
+          return { ...c, pre_score: score };
+        });
+
+        const preFiltered = preScored
+          .filter((c: any) => c.pre_score >= 30)
+          .sort((a: any, b: any) => b.pre_score - a.pre_score)
+          .slice(0, 25);
+
+        const funnelReceived = allCompanies.length;
+        const funnelPreFiltered = preFiltered.length;
+
+        console.log(`[Funil] Recebidas: ${funnelReceived} → Pré-filtradas: ${funnelPreFiltered} → IA`);
 
         systemPrompt = `You are an elite M&A matching analyst specializing in the Brazilian market. ALL companies are located in Brazil. You MUST follow the SCORING RUBRIC below strictly. Return ONLY a valid JSON array.
 
@@ -67,10 +90,10 @@ INCOMPLETE DATA: If a company lacks revenue OR ebitda, reduce financial_fit by 2
 
 ${notes ? `STRATEGIC NOTES FROM BUYER (MUST influence scoring and analysis): "${notes}"` : ""}`;
 
-        userPrompt = `Buyer acquisition criteria: ${JSON.stringify(data.criteria)}
+        userPrompt = `Buyer acquisition criteria: ${JSON.stringify(criteria)}
 Investor profile: ${investorProfile}
 
-Candidate companies (all in Brazil): ${JSON.stringify(data.companies)}
+Candidate companies (pre-filtered, all in Brazil): ${JSON.stringify(preFiltered)}
 
 Note: Each company may include a "distance_km" field indicating distance from the buyer's reference city. Use this for location_fit scoring.
 
@@ -85,6 +108,9 @@ For EACH company, return a JSON array element with:
 - "recommendation": one actionable sentence on next steps
 
 Return ONLY a JSON array.`;
+
+        // Store funnel data on data object to include in response
+        (data as any).__funnel = { received: funnelReceived, pre_filtered: funnelPreFiltered };
         break;
       }
 
@@ -183,7 +209,8 @@ Provide a comprehensive due diligence analysis.`;
       parsed = content;
     }
 
-    return new Response(JSON.stringify({ result: parsed }), {
+    const funnel = (data as any).__funnel || null;
+    return new Response(JSON.stringify({ result: parsed, funnel }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

@@ -77,8 +77,12 @@ serve(async (req) => {
       target_sector,
       target_state,
       target_size,
-      limit = 150,
+      raw = false,
+      limit,
     } = body;
+
+    // Layer 1: DB-level filter - return 80 for matching, up to 200 for raw exploration
+    const effectiveLimit = limit ?? (raw ? 200 : 80);
 
     const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
     const client = new Client(EXTERNAL_DB_URL);
@@ -140,7 +144,7 @@ serve(async (req) => {
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
       ORDER BY em.capital_social DESC NULLS LAST
-      LIMIT ${Math.min(limit, 200)}
+      LIMIT ${effectiveLimit}
     `;
 
     console.log("Executing query with params:", params);
@@ -181,7 +185,7 @@ serve(async (req) => {
     console.log(`national-search: returned ${companies.length} companies`);
 
     return new Response(
-      JSON.stringify({ companies, total: companies.length }),
+      JSON.stringify({ companies, total: companies.length, db_count: companies.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
