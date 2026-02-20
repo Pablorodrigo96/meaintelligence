@@ -352,9 +352,18 @@ export default function Matching() {
         });
         if (nationalError) throw new Error(`Erro ao buscar Base Nacional: ${nationalError.message}`);
         if (nationalData?.error) throw new Error(`Erro na Base Nacional: ${nationalData.error}`);
-        companiesToAnalyze = nationalData?.companies || [];
+        const rawCompanies: any[] = nationalData?.companies || [];
+        // Correção 3: Deduplicação frontend por cnpj_basico (primeiros 8 dígitos)
+        // Garante que mesmo se o BD retornar duplicatas, o usuário vê 1 empresa por grupo
+        const seenBaseCnpj = new Set<string>();
+        companiesToAnalyze = rawCompanies.filter((company: any) => {
+          const baseCnpj = String(company.cnpj || "").replace(/\D/g, "").substring(0, 8);
+          if (!baseCnpj || seenBaseCnpj.has(baseCnpj)) return false;
+          seenBaseCnpj.add(baseCnpj);
+          return true;
+        });
         setNationalCompanies(companiesToAnalyze);
-        setFunnelStats({ db_fetched: nationalData?.db_count || companiesToAnalyze.length, pre_filtered: 0, ai_analyzed: 0, final_matches: 0 });
+        setFunnelStats({ db_fetched: rawCompanies.length, pre_filtered: 0, ai_analyzed: 0, final_matches: 0 });
         if (companiesToAnalyze.length === 0) throw new Error("Nenhuma empresa encontrada na Base Nacional com esses critérios. Tente ampliar os filtros.");
       } else {
         if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios.");
@@ -628,9 +637,9 @@ export default function Matching() {
   };
 
   // ── LOOKUP LOCAL DE INTENÇÃO (zero IA, zero custo) ──────────────────────
-  const KEYWORD_MAP = [
+  const KEYWORD_MAP: Array<{ keywords: string[]; cnae_prefixes: string[]; sector: string; subtype: string; default_max_capital?: number }> = [
     { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro", "escritório contábil", "contabilidade"], cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
-    { keywords: ["banco", "financeira", "crédito", "empréstimo", "fintec"], cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking" },
+    { keywords: ["banco", "financeira", "crédito", "empréstimo", "fintec"], cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking", default_max_capital: 100_000_000 },
     { keywords: ["seguro", "previdência", "seguradora"], cnae_prefixes: ["65"], sector: "Finance", subtype: "Insurance" },
     { keywords: ["software", "tecnologia", "ti ", " ti,", "sistemas", "saas", "startup de tech", "desenvolvimento", "app", "aplicativo"], cnae_prefixes: ["62", "63"], sector: "Technology", subtype: "Software" },
     { keywords: ["saúde", "clínica", "hospital", "farmácia", "laboratório", "medicina", "odontologia", "dentista"], cnae_prefixes: ["86", "87", "88"], sector: "Healthcare", subtype: "Health" },
@@ -639,8 +648,10 @@ export default function Matching() {
     { keywords: ["logística", "transporte", "frete", "distribuição", "armazém", "estoque"], cnae_prefixes: ["49", "50", "51", "52"], sector: "Logistics", subtype: "Logistics" },
     { keywords: ["comércio", "varejo", "loja", "venda", "atacado", "distribuidora"], cnae_prefixes: ["45", "46", "47"], sector: "Retail", subtype: "Retail" },
     { keywords: ["agro", "agricultura", "pecuária", "fazenda", "agronegócio", "soja", "milho", "café"], cnae_prefixes: ["01", "02", "03"], sector: "Agribusiness", subtype: "Agro" },
-    { keywords: ["energia", "elétrica", "solar", "geração", "eólica", "fotovoltaico"], cnae_prefixes: ["35"], sector: "Energy", subtype: "Energy" },
-    { keywords: ["telecom", "telecomunicações", "internet", "fibra", "provedor"], cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom" },
+    { keywords: ["energia", "elétrica", "solar", "geração", "eólica", "fotovoltaico"], cnae_prefixes: ["35"], sector: "Energy", subtype: "Energy", default_max_capital: 200_000_000 },
+    // ISP first (specific 4-digit CNAEs) — must come before generic Telecom
+    { keywords: ["provedor de internet", "isp", "fibra óptica", "internet residencial", "internet empresarial", "provedor regional", "provedora de internet", "link dedicado", "acesso à internet"], cnae_prefixes: ["6110", "6120", "6130", "6141", "6142", "6143", "6190"], sector: "Telecom", subtype: "ISP", default_max_capital: 50_000_000 },
+    { keywords: ["telecom", "telecomunicações", "operadora", "telefonia", "fibra", "internet", "provedor"], cnae_prefixes: ["61"], sector: "Telecom", subtype: "Telecom", default_max_capital: 50_000_000 },
     { keywords: ["indústria", "manufatura", "fábrica", "industrial", "produção"], cnae_prefixes: ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "23", "24", "25"], sector: "Manufacturing", subtype: "Manufacturing" },
   ];
 
@@ -677,7 +688,7 @@ export default function Matching() {
       else if (unit.startsWith("k") || unit === "mil") buyerRevenueBrl = val * 1e3;
     }
     const matched = KEYWORD_MAP.find(entry => entry.keywords.some(kw => lower.includes(kw)));
-    const maxCapital = buyerRevenueBrl ? buyerRevenueBrl * 0.5 : null;
+    const maxCapital = buyerRevenueBrl ? buyerRevenueBrl * 0.5 : (matched?.default_max_capital ?? null);
     const target_size = lower.includes("startup") ? "Startup" : lower.includes("pequen") ? "Small" : lower.includes("médi") ? "Medium" : lower.includes("grande") ? "Large" : "Small";
     return {
       target_sector: matched?.sector || null,
