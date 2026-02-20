@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
@@ -207,6 +207,8 @@ export default function Matching() {
     final_matches: number;
   } | null>(null);
   const [funnelOpen, setFunnelOpen] = useState(true);
+  // feedback state: set of match IDs with pending feedback action
+  const [feedbackLoading, setFeedbackLoading] = useState<Record<string, string>>({});
 
   // Natural language / parse-intent state
   const [nlText, setNlText] = useState("");
@@ -506,6 +508,40 @@ export default function Matching() {
     queryClient.invalidateQueries({ queryKey: ["matches"] });
   };
 
+  // Record user feedback for future neural model training
+  const recordFeedback = async (
+    matchId: string,
+    companyId: string,
+    actionType: "saved" | "ignored" | "contacted" | "rejected" | "clicked",
+    rankPosition: number,
+    rejectionReason?: string,
+  ) => {
+    setFeedbackLoading(prev => ({ ...prev, [matchId]: actionType }));
+    try {
+      await supabase.from("match_feedback").insert({
+        user_id: user!.id,
+        match_id: matchId,
+        company_id: companyId,
+        action_type: actionType,
+        rank_position: rankPosition,
+        rejection_reason: rejectionReason || null,
+        criteria_snapshot: null,
+      });
+      // Also update match status for UI consistency
+      if (actionType === "saved") await updateStatus(matchId, "saved");
+      if (actionType === "ignored") await updateStatus(matchId, "dismissed");
+    } catch (e) {
+      console.error("Error recording feedback:", e);
+    } finally {
+      setFeedbackLoading(prev => {
+        const next = { ...prev };
+        delete next[matchId];
+        return next;
+      });
+    }
+  };
+
+
   const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[] } => {
     if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [] };
     try {
@@ -589,6 +625,8 @@ export default function Matching() {
     setWizardStep(1);
   };
 
+  const shortlistCount = matches.filter(m => m.status === "saved").length;
+
   const formatCurrency = (val: number | null) => {
     if (val == null) return "N/A";
     if (val >= 1e9) return `R$${(val / 1e9).toFixed(1)}B`;
@@ -664,6 +702,7 @@ export default function Matching() {
           <TabsTrigger value="results" className="gap-2">
             <Search className="w-4 h-4" />Resultados
             {matches.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{matches.length}</Badge>}
+            {shortlistCount > 0 && <Badge className="ml-1 text-xs bg-success/20 text-success border-success/30">{shortlistCount} ★</Badge>}
           </TabsTrigger>
           <TabsTrigger value="analytics" className="gap-2"><BarChart3 className="w-4 h-4" />Analytics</TabsTrigger>
         </TabsList>
@@ -1186,89 +1225,146 @@ export default function Matching() {
               {/* Cards grid */}
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {displayMatches.map((m, idx) => {
-                  const { analysis, dimensions, dimension_explanations, recommendation, strengths, weaknesses } = parseAnalysis(m.ai_analysis);
-                  const isExpanded = expandedMatch === m.id;
-                  const score = Number(m.compatibility_score);
-                  const completeness = m.companies ? calcCompleteness(m.companies) : 0;
-                  const isTop3 = idx < 3 && score >= 60;
+                   const parsedData = parseAnalysis(m.ai_analysis);
+                   const { analysis, dimensions, dimension_explanations, recommendation, strengths, weaknesses } = parsedData;
+                   const isFromNational = (() => { try { return JSON.parse(m.ai_analysis || "{}").source === "national_db"; } catch { return false; } })();
+                   const isExpanded = expandedMatch === m.id;
+                   const score = Number(m.compatibility_score);
+                   const completeness = m.companies ? calcCompleteness(m.companies) : 0;
+                   const isTop3 = idx < 3 && score >= 60;
+                   const isFeedbackLoading = (action: string) => feedbackLoading[m.id] === action;
 
                   return (
-                    <Card
-                      key={m.id}
-                      className={`cursor-pointer transition-all hover:shadow-md ${
-                        isTop3 ? "ring-2 ring-warning/50 border-warning/30" : ""
-                      } ${m.status === "dismissed" ? "opacity-50" : ""} ${isExpanded ? "md:col-span-2 lg:col-span-3" : ""}`}
-                      onClick={() => setExpandedMatch(isExpanded ? null : m.id)}
-                    >
-                      <CardContent className="pt-5">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              {isTop3 && <Trophy className="w-4 h-4 text-warning flex-shrink-0" />}
-                              <h3 className="font-display font-semibold text-sm truncate">{m.companies?.name || "Desconhecido"}</h3>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
-                              {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
-                            </div>
-                          </div>
-                          {/* Score gauge */}
-                          <div className={`flex flex-col items-center justify-center rounded-lg border px-3 py-2 ${scoreBg(score)}`}>
-                            <span className="text-2xl font-bold">{score}</span>
-                            <span className="text-[10px] uppercase font-medium">Score</span>
-                          </div>
-                        </div>
+                     <Card
+                       key={m.id}
+                       className={`cursor-pointer transition-all hover:shadow-md ${
+                         isTop3 ? "ring-2 ring-warning/50 border-warning/30" : ""
+                       } ${m.status === "dismissed" ? "opacity-50" : ""} ${isExpanded ? "md:col-span-2 lg:col-span-3" : ""}`}
+                       onClick={() => {
+                         setExpandedMatch(isExpanded ? null : m.id);
+                         if (!isExpanded && m.companies?.id) {
+                           recordFeedback(m.id, m.companies.id, "clicked", idx + 1);
+                         }
+                       }}
+                     >
+                       <CardContent className="pt-5">
+                         <div className="flex items-start justify-between mb-3">
+                           <div className="flex-1 min-w-0">
+                             <div className="flex items-center gap-2 mb-1">
+                               {isTop3 && <Trophy className="w-4 h-4 text-warning flex-shrink-0" />}
+                               <h3 className="font-display font-semibold text-sm truncate">{m.companies?.name || "Desconhecido"}</h3>
+                             </div>
+                             <div className="flex items-center gap-2 flex-wrap">
+                               <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
+                               {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
+                               {/* Data source badge */}
+                               {isFromNational && (
+                                 <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                   <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
+                                 </Badge>
+                               )}
+                             </div>
+                           </div>
+                           {/* Score gauge */}
+                           <div className={`flex flex-col items-center justify-center rounded-lg border px-3 py-2 ${scoreBg(score)}`}>
+                             <span className="text-2xl font-bold">{score}</span>
+                             <span className="text-[10px] uppercase font-medium">Score</span>
+                           </div>
+                         </div>
 
-                        {/* Mini stats row */}
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3">
-                          <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
-                          <span>·</span>
-                          <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
-                          <span>·</span>
-                          <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
-                            {completeness}% dados
-                          </Badge>
-                        </div>
+                         {/* Mini stats row */}
+                         <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3">
+                           <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
+                           <span>·</span>
+                           <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
+                           <span>·</span>
+                           <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
+                             {completeness}% dados
+                           </Badge>
+                         </div>
 
-                        {/* Mini radar chart */}
-                        {dimensions && !isExpanded && (
-                          <div className="flex justify-center">
-                            <ResponsiveContainer width={130} height={100}>
-                              <RadarChart data={[
-                                { dim: "Fin", value: dimensions.financial_fit },
-                                { dim: "Set", value: dimensions.sector_fit },
-                                { dim: "Tam", value: dimensions.size_fit },
-                                { dim: "Loc", value: dimensions.location_fit },
-                                { dim: "Ris", value: dimensions.risk_fit },
-                              ]}>
-                                <PolarGrid stroke="hsl(var(--border))" />
-                                <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
-                                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                                <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={1.5} />
-                              </RadarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        )}
+                         {/* Mini radar chart */}
+                         {dimensions && !isExpanded && (
+                           <div className="flex justify-center">
+                             <ResponsiveContainer width={130} height={100}>
+                               <RadarChart data={[
+                                 { dim: "Fin", value: dimensions.financial_fit },
+                                 { dim: "Set", value: dimensions.sector_fit },
+                                 { dim: "Tam", value: dimensions.size_fit },
+                                 { dim: "Loc", value: dimensions.location_fit },
+                                 { dim: "Ris", value: dimensions.risk_fit },
+                               ]}>
+                                 <PolarGrid stroke="hsl(var(--border))" />
+                                 <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
+                                 <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                                 <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={1.5} />
+                               </RadarChart>
+                             </ResponsiveContainer>
+                           </div>
+                         )}
 
-                        {/* Actions */}
-                        <div className="flex items-center justify-between mt-2">
-                          <div className="flex gap-1">
-                            <Button variant={m.status === "saved" ? "default" : "outline"} size="sm" className="h-7 text-xs gap-1" onClick={(e) => { e.stopPropagation(); updateStatus(m.id, "saved"); }}>
-                              <Star className="w-3 h-3" />{m.status === "saved" ? "Salvo" : "Salvar"}
-                            </Button>
-                            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={(e) => { e.stopPropagation(); updateStatus(m.id, "dismissed"); }}>
-                              <X className="w-3 h-3" />Dispensar
-                            </Button>
-                          </div>
-                          {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                        </div>
+                         {/* Actions — feedback buttons */}
+                         <div className="flex items-center justify-between mt-2">
+                           <div className="flex gap-1 flex-wrap">
+                             <Button
+                               variant={m.status === "saved" ? "default" : "outline"}
+                               size="sm"
+                               className={`h-7 text-xs gap-1 ${m.status === "saved" ? "bg-success text-success-foreground hover:bg-success/90" : ""}`}
+                               disabled={isFeedbackLoading("saved")}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 if (m.companies?.id) recordFeedback(m.id, m.companies.id, "saved", idx + 1);
+                               }}
+                             >
+                               {isFeedbackLoading("saved") ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bookmark className="w-3 h-3" />}
+                               {m.status === "saved" ? "Shortlist ✓" : "Shortlist"}
+                             </Button>
+                             <Button
+                               variant="outline"
+                               size="sm"
+                               className="h-7 text-xs gap-1 border-primary/30 hover:bg-primary/5"
+                               disabled={isFeedbackLoading("contacted")}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 if (m.companies?.id) recordFeedback(m.id, m.companies.id, "contacted", idx + 1);
+                                 toast({ title: "Marcado como contatado", description: "Registrado para análise do modelo." });
+                               }}
+                             >
+                               {isFeedbackLoading("contacted") ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3" />}
+                               Contatado
+                             </Button>
+                             <Button
+                               variant="ghost"
+                               size="sm"
+                               className="h-7 text-xs gap-1 text-muted-foreground"
+                               disabled={isFeedbackLoading("ignored")}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 if (m.companies?.id) recordFeedback(m.id, m.companies.id, "ignored", idx + 1);
+                               }}
+                             >
+                               {isFeedbackLoading("ignored") ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                               Ignorar
+                             </Button>
+                           </div>
+                           {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                         </div>
 
-                        {/* Expanded detail */}
-                        {isExpanded && (
-                          <div className="mt-4 pt-4 border-t space-y-4">
-                            <div className="grid gap-6 lg:grid-cols-2">
-                              <div className="space-y-4">
-                                <div>
+                         {/* Expanded detail */}
+                         {isExpanded && (
+                           <div className="mt-4 pt-4 border-t space-y-4">
+                             {/* Data confidence notice */}
+                             {isFromNational && (
+                               <div className="rounded-lg border border-muted-foreground/20 bg-muted/30 px-3 py-2 flex items-center gap-2">
+                                 <AlertCircle className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                 <p className="text-xs text-muted-foreground">
+                                   <span className="font-medium">Dados estimados — capital social proxy.</span> Receita e EBITDA são estimativas baseadas em capital social. Financial_fit calculado com peso reduzido.
+                                 </p>
+                               </div>
+                             )}
+                             <div className="grid gap-6 lg:grid-cols-2">
+                               <div className="space-y-4">
+                                 <div>
                                   <h4 className="font-display font-semibold text-sm mb-2">Análise da IA</h4>
                                   <p className="text-sm text-muted-foreground leading-relaxed">{analysis}</p>
                                 </div>

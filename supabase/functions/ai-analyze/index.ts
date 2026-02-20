@@ -23,20 +23,70 @@ serve(async (req) => {
         const notes = data.criteria?.notes || "";
         const criteria = data.criteria || {};
 
-        // ── LAYER 2: Deterministic pre-score (no AI, runs in milliseconds) ──
+        // ── LAYER 2: Deterministic pre-score with sector adjacency ──
+        // Matriz de adjacência: setores complementares recebem pontuação parcial em vez de zero
+        const SECTOR_ADJACENCY: Record<string, string[]> = {
+          "Finance": ["Technology", "Real Estate", "Other"],
+          "Technology": ["Finance", "Telecom", "Education"],
+          "Healthcare": ["Technology", "Education", "Other"],
+          "Manufacturing": ["Logistics", "Energy", "Retail"],
+          "Retail": ["Logistics", "Manufacturing", "Other"],
+          "Logistics": ["Manufacturing", "Retail", "Agribusiness"],
+          "Real Estate": ["Finance", "Construction", "Other"],
+          "Agribusiness": ["Logistics", "Manufacturing", "Energy"],
+          "Education": ["Technology", "Healthcare", "Other"],
+          "Energy": ["Manufacturing", "Agribusiness", "Other"],
+          "Telecom": ["Technology", "Finance", "Other"],
+          "Other": [],
+        };
+
         const allCompanies: any[] = data.companies || [];
+        const buyerCnaePrefixes: string[] = criteria.cnae_prefixes || [];
+
         const preScored = allCompanies.map((c: any) => {
           let score = 0;
-          if (criteria.target_sector && c.sector === criteria.target_sector) score += 40;
-          if (criteria.target_size && c.size === criteria.target_size) score += 20;
+
+          // Setor: exato (+40), adjacente (+20), bonus por CNAE prefix (+15)
+          if (criteria.target_sector) {
+            if (c.sector === criteria.target_sector) {
+              score += 40;
+            } else if (SECTOR_ADJACENCY[criteria.target_sector]?.includes(c.sector)) {
+              score += 20;
+            }
+          }
+          // Bonus CNAE: se o prefixo da empresa bate com os prefixos extraídos pelo parse-intent
+          if (buyerCnaePrefixes.length > 0) {
+            const companyCnae = c.cnae_fiscal_principal ||
+              (c.description?.match(/CNAE: (\d+)/)?.[1]) || "";
+            if (buyerCnaePrefixes.some((p: string) => String(companyCnae).startsWith(p))) {
+              score += 15;
+            }
+          }
+
+          // Porte: exato (+20), adjacente (+10)
+          const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
+          const targetIdx = sizeOrder.indexOf(criteria.target_size || "");
+          const companyIdx = sizeOrder.indexOf(c.size || "");
+          if (criteria.target_size) {
+            if (c.size === criteria.target_size) score += 20;
+            else if (targetIdx >= 0 && companyIdx >= 0 && Math.abs(targetIdx - companyIdx) === 1) score += 10;
+          }
+
+          // Estado (+20)
           if (criteria.target_state && c.state === criteria.target_state) score += 20;
+
+          // Dados disponíveis (+10)
           if (c.revenue || c.capital_social) score += 10;
+
+          // CNPJ válido (+10)
           if (c.cnpj && String(c.cnpj).replace(/\D/g, "").length >= 14) score += 10;
+
           return { ...c, pre_score: score };
         });
 
+        // Threshold reduzido de 30→20 para aumentar recall (adjacências agora pontuam)
         const preFiltered = preScored
-          .filter((c: any) => c.pre_score >= 30)
+          .filter((c: any) => c.pre_score >= 20)
           .sort((a: any, b: any) => b.pre_score - a.pre_score)
           .slice(0, 25);
 
@@ -49,18 +99,20 @@ serve(async (req) => {
 
 SCORING RUBRIC PER DIMENSION (0-100):
 
-FINANCIAL_FIT:
+FINANCIAL_FIT (CONFIDENCE-AWARE):
 - 90-100: Revenue AND EBITDA within desired range, healthy margins, controlled debt
 - 70-89: Within range with minor deviations, acceptable margins
-- 40-69: Partially outside range OR incomplete financial data
-- 0-39: Significantly outside financial criteria OR no financial data
-- PENALTY: If the company has NO revenue OR NO ebitda data, reduce financial_fit by 20 points and mention this in the explanation.
+- 40-69: Partially outside range OR estimated financial data (capital_social proxy)
+- 0-39: Significantly outside financial criteria
+- IMPORTANT: If the company has NO revenue AND NO ebitda (only capital_social), set financial_fit = 50 (neutral — do NOT penalize). Mention in dimension_explanations that data is estimated from capital social.
+- Do NOT reduce financial_fit below 50 solely due to missing data.
 
 SECTOR_FIT:
 - 90-100: Same sector or adjacent sector with clear synergy
 - 70-89: Related sector with synergy potential
 - 40-69: Different sector but some complementarity
 - 0-39: Unrelated sector or declining industry
+- Note: companies with pre_score bonus from CNAE prefix match should receive higher sector_fit.
 
 SIZE_FIT:
 - 90-100: Exact target size match
@@ -79,14 +131,19 @@ ${riskLevel ? `- Buyer's preferred risk level: "${riskLevel}". Companies matchin
 - For Aggressive profile: High risk = 70-85, Medium = 55-70, Low = 50-65
 - For Moderate profile: balanced distribution
 
+DYNAMIC WEIGHT FOR FINANCIAL_FIT based on data availability:
+- If the company HAS revenue AND ebitda: use standard profile weights below
+- If the company has ONLY capital_social (no real revenue): reduce financial_fit weight by 40% and redistribute equally to sector_fit and size_fit
+
 OVERALL SCORE = Weighted average based on investor profile:
-- Agressivo: sector_fit*0.30 + size_fit*0.25 + financial_fit*0.20 + location_fit*0.15 + risk_fit*0.10
-- Moderado: financial_fit*0.25 + sector_fit*0.20 + size_fit*0.20 + location_fit*0.20 + risk_fit*0.15
-- Conservador: financial_fit*0.30 + risk_fit*0.30 + sector_fit*0.15 + size_fit*0.15 + location_fit*0.10
+- Agressivo (standard): sector_fit*0.30 + size_fit*0.25 + financial_fit*0.20 + location_fit*0.15 + risk_fit*0.10
+- Agressivo (sem dados financeiros): sector_fit*0.35 + size_fit*0.30 + financial_fit*0.12 + location_fit*0.15 + risk_fit*0.08
+- Moderado (standard): financial_fit*0.25 + sector_fit*0.20 + size_fit*0.20 + location_fit*0.20 + risk_fit*0.15
+- Moderado (sem dados financeiros): sector_fit*0.30 + size_fit*0.30 + financial_fit*0.15 + location_fit*0.15 + risk_fit*0.10
+- Conservador (standard): financial_fit*0.30 + risk_fit*0.30 + sector_fit*0.15 + size_fit*0.15 + location_fit*0.10
+- Conservador (sem dados financeiros): risk_fit*0.35 + sector_fit*0.20 + size_fit*0.20 + financial_fit*0.15 + location_fit*0.10
 
-The compatibility_score MUST equal the weighted average of the dimensions (rounded). Do NOT generate it independently.
-
-INCOMPLETE DATA: If a company lacks revenue OR ebitda, reduce financial_fit by 20 points and mention in the explanation.
+The compatibility_score MUST equal the weighted average of the dimensions using the appropriate weight set (rounded). Do NOT generate it independently.
 
 ${notes ? `STRATEGIC NOTES FROM BUYER (MUST influence scoring and analysis): "${notes}"` : ""}`;
 

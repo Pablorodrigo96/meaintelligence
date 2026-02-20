@@ -344,6 +344,50 @@ export type Database = {
         }
         Relationships: []
       }
+      match_feedback: {
+        Row: {
+          action_type: string
+          company_id: string
+          created_at: string
+          criteria_snapshot: Json | null
+          id: string
+          match_id: string | null
+          rank_position: number | null
+          rejection_reason: string | null
+          user_id: string
+        }
+        Insert: {
+          action_type: string
+          company_id: string
+          created_at?: string
+          criteria_snapshot?: Json | null
+          id?: string
+          match_id?: string | null
+          rank_position?: number | null
+          rejection_reason?: string | null
+          user_id: string
+        }
+        Update: {
+          action_type?: string
+          company_id?: string
+          created_at?: string
+          criteria_snapshot?: Json | null
+          id?: string
+          match_id?: string | null
+          rank_position?: number | null
+          rejection_reason?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_feedback_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       matches: {
         Row: {
           ai_analysis: string | null
