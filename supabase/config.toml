@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.company-deep-dive]
 verify_jwt = false
+
+[functions.national-search]
+verify_jwt = false

@@ -1,0 +1,204 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+// CNAE to internal sector mapping
+const CNAE_SECTOR_MAP: Record<string, string> = {
+  "01": "Agribusiness", "02": "Agribusiness", "03": "Agribusiness",
+  "05": "Energy", "06": "Energy", "07": "Energy", "08": "Energy", "09": "Energy",
+  "10": "Manufacturing", "11": "Manufacturing", "12": "Manufacturing",
+  "13": "Manufacturing", "14": "Manufacturing", "15": "Manufacturing",
+  "16": "Manufacturing", "17": "Manufacturing", "18": "Manufacturing",
+  "19": "Energy", "20": "Manufacturing", "21": "Healthcare",
+  "22": "Manufacturing", "23": "Manufacturing", "24": "Manufacturing",
+  "25": "Manufacturing", "26": "Technology", "27": "Manufacturing",
+  "28": "Manufacturing", "29": "Manufacturing", "30": "Manufacturing",
+  "31": "Manufacturing", "32": "Manufacturing", "33": "Manufacturing",
+  "35": "Energy", "36": "Manufacturing", "37": "Manufacturing",
+  "38": "Manufacturing", "39": "Manufacturing",
+  "41": "Real Estate", "42": "Real Estate", "43": "Real Estate",
+  "45": "Retail", "46": "Retail", "47": "Retail",
+  "49": "Logistics", "50": "Logistics", "51": "Logistics",
+  "52": "Logistics", "53": "Logistics",
+  "55": "Retail", "56": "Retail",
+  "58": "Technology", "59": "Technology", "60": "Telecom",
+  "61": "Telecom", "62": "Technology", "63": "Technology",
+  "64": "Finance", "65": "Finance", "66": "Finance",
+  "68": "Real Estate",
+  "69": "Finance", "70": "Finance",
+  "71": "Technology", "72": "Technology", "73": "Technology",
+  "74": "Technology", "75": "Healthcare",
+  "77": "Retail", "78": "Other", "79": "Retail",
+  "80": "Other", "81": "Other", "82": "Other",
+  "84": "Other", "85": "Education",
+  "86": "Healthcare", "87": "Healthcare", "88": "Healthcare",
+  "90": "Other", "91": "Other", "92": "Other", "93": "Other",
+  "94": "Other", "95": "Technology", "96": "Other",
+  "97": "Other", "99": "Other",
+};
+
+function mapCnaeToSector(cnae: string | null): string {
+  if (!cnae) return "Other";
+  const prefix = String(cnae).substring(0, 2);
+  return CNAE_SECTOR_MAP[prefix] || "Other";
+}
+
+// Map Receita Federal porte to internal size
+function mapPorteToSize(porte: string | null): string {
+  if (!porte) return "Small";
+  const p = porte.toUpperCase();
+  if (p.includes("MEI") || p === "00") return "Startup";
+  if (p.includes("ME") || p.includes("MICRO") || p === "01") return "Small";
+  if (p.includes("EPP") || p.includes("PEQUENA") || p === "03") return "Small";
+  if (p.includes("MEDIA") || p.includes("MÉDIO") || p === "05") return "Medium";
+  if (p.includes("GRANDE") || p === "05") return "Large";
+  return "Small";
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  try {
+    const EXTERNAL_DB_URL = Deno.env.get("EXTERNAL_DB_URL");
+    if (!EXTERNAL_DB_URL) {
+      return new Response(
+        JSON.stringify({ error: "EXTERNAL_DB_URL not configured. Please add the connection string as a secret." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const body = await req.json();
+    const {
+      target_sector,
+      target_state,
+      target_size,
+      limit = 150,
+      // Table/column config (with Receita Federal defaults)
+      table_name = "estabelecimentos",
+      col_cnpj = "cnpj",
+      col_razao_social = "razao_social",
+      col_nome_fantasia = "nome_fantasia",
+      col_cnae = "cnae_fiscal",
+      col_uf = "uf",
+      col_municipio = "municipio",
+      col_porte = "porte",
+      col_capital_social = "capital_social",
+      col_situacao = "situacao_cadastral",
+      situacao_ativa = "ATIVA",
+    } = body;
+
+    // Dynamic import of postgres driver
+    const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
+
+    const client = new Client(EXTERNAL_DB_URL);
+    await client.connect();
+
+    // Build parameterized query dynamically
+    const params: string[] = [];
+    const conditions: string[] = [`${col_situacao} = '${situacao_ativa}'`];
+
+    if (target_state) {
+      params.push(target_state);
+      conditions.push(`${col_uf} = $${params.length}`);
+    }
+
+    if (target_size) {
+      // Map internal size to Receita Federal porte codes
+      const porteMap: Record<string, string[]> = {
+        "Startup": ["MEI", "00"],
+        "Small": ["ME", "01", "03"],
+        "Medium": ["05"],
+        "Large": ["05"],
+        "Enterprise": ["05"],
+      };
+      const portes = porteMap[target_size];
+      if (portes && portes.length > 0) {
+        const placeholders = portes.map((_, i) => `$${params.length + i + 1}`).join(", ");
+        params.push(...portes);
+        conditions.push(`${col_porte} IN (${placeholders})`);
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // CNAE filter for sector (using LIKE on cnae prefix)
+    let cnaeCondition = "";
+    if (target_sector) {
+      // Find CNAE prefixes that match the sector
+      const matchingPrefixes = Object.entries(CNAE_SECTOR_MAP)
+        .filter(([, sector]) => sector === target_sector)
+        .map(([prefix]) => prefix);
+      
+      if (matchingPrefixes.length > 0) {
+        const cnaeLikes = matchingPrefixes.map((prefix) => `${col_cnae}::text LIKE '${prefix}%'`).join(" OR ");
+        cnaeCondition = conditions.length > 0 ? ` AND (${cnaeLikes})` : ` WHERE (${cnaeLikes})`;
+      }
+    }
+
+    const query = `
+      SELECT 
+        ${col_cnpj} as cnpj,
+        ${col_razao_social} as razao_social,
+        ${col_nome_fantasia} as nome_fantasia,
+        ${col_cnae} as cnae_fiscal,
+        ${col_uf} as uf,
+        ${col_municipio} as municipio,
+        ${col_porte} as porte,
+        ${col_capital_social} as capital_social
+      FROM ${table_name}
+      ${whereClause}${cnaeCondition}
+      ORDER BY ${col_capital_social} DESC NULLS LAST
+      LIMIT ${Math.min(limit, 200)}
+    `;
+
+    console.log("Executing query:", query, "params:", params);
+
+    const result = await client.queryObject({
+      text: query,
+      args: params,
+    });
+
+    await client.end();
+
+    // Map to internal company format
+    const companies = (result.rows as any[]).map((row) => {
+      const cnpj = String(row.cnpj || "").replace(/\D/g, "");
+      const capitalSocial = parseFloat(row.capital_social) || null;
+      
+      return {
+        id: cnpj || `ext_${Math.random().toString(36).substr(2, 9)}`,
+        name: row.nome_fantasia || row.razao_social || "Empresa sem nome",
+        cnpj: cnpj || null,
+        sector: mapCnaeToSector(row.cnae_fiscal),
+        state: row.uf || null,
+        city: row.municipio || null,
+        size: mapPorteToSize(row.porte),
+        revenue: capitalSocial ? capitalSocial * 2 : null, // capital social proxy
+        ebitda: null,
+        cash_flow: null,
+        debt: null,
+        risk_level: "Medium",
+        description: `CNAE: ${row.cnae_fiscal || "N/A"} | Porte: ${row.porte || "N/A"} | Capital Social: ${capitalSocial ? `R$${(capitalSocial/1000).toFixed(0)}K` : "N/A"}`,
+        location: `${row.municipio || ""}, ${row.uf || ""}`.trim().replace(/^,\s*/, ""),
+        source: "national_db",
+      };
+    });
+
+    console.log(`national-search: returned ${companies.length} companies`);
+
+    return new Response(
+      JSON.stringify({ companies, total: companies.length }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+
+  } catch (e) {
+    console.error("national-search error:", e);
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error", companies: [] }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
