@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
@@ -208,6 +208,30 @@ export default function Matching() {
   } | null>(null);
   const [funnelOpen, setFunnelOpen] = useState(true);
 
+  // Natural language / parse-intent state
+  const [nlText, setNlText] = useState("");
+  const [nlParsing, setNlParsing] = useState(false);
+  const [nlResult, setNlResult] = useState<{
+    target_sector?: string;
+    cnae_prefixes?: string[];
+    cnae_subtype?: string;
+    target_size?: string;
+    buyer_revenue_brl?: number;
+    max_capital_social_brl?: number;
+    min_capital_social_brl?: number;
+    intent?: string;
+    suggested_notes?: string;
+    human_readable_summary?: string;
+  } | null>(null);
+
+  // Extra params extracted by parse-intent, passed to national-search
+  const [nlExtraParams, setNlExtraParams] = useState<{
+    cnae_prefixes?: string[];
+    min_capital_social?: number;
+    max_capital_social?: number;
+    buyer_revenue_brl?: number;
+  }>({});
+
   const [criteria, setCriteria] = useState({
     target_sector: "",
     target_size: "",
@@ -318,6 +342,13 @@ export default function Matching() {
             target_sector: criteria.target_sector || null,
             target_state: criteria.target_state || null,
             target_size: criteria.target_size || null,
+            // Inject parse-intent params if available (overrides broad sector filter)
+            ...(nlExtraParams.cnae_prefixes && nlExtraParams.cnae_prefixes.length > 0 ? {
+              cnae_prefixes: nlExtraParams.cnae_prefixes,
+            } : {}),
+            ...(nlExtraParams.min_capital_social != null ? { min_capital_social: nlExtraParams.min_capital_social } : {}),
+            ...(nlExtraParams.max_capital_social != null ? { max_capital_social: nlExtraParams.max_capital_social } : {}),
+            ...(nlExtraParams.buyer_revenue_brl != null ? { buyer_revenue_brl: nlExtraParams.buyer_revenue_brl } : {}),
             // Layer 1: limit 80 — pre-filtered at DB level
           },
         });
@@ -566,6 +597,43 @@ export default function Matching() {
     return `R$${val}`;
   };
 
+  const parseIntent = async () => {
+    if (!nlText.trim()) return;
+    setNlParsing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ai-analyze", {
+        body: { type: "parse-intent", data: { text: nlText } },
+      });
+      if (error) throw error;
+      const parsed = data?.result || data;
+      if (parsed && typeof parsed === "object") {
+        setNlResult(parsed);
+        // Store extra params for national-search
+        setNlExtraParams({
+          cnae_prefixes: parsed.cnae_prefixes,
+          min_capital_social: parsed.min_capital_social_brl,
+          max_capital_social: parsed.max_capital_social_brl,
+          buyer_revenue_brl: parsed.buyer_revenue_brl,
+        });
+        // Auto-fill criteria fields
+        if (parsed.target_sector) setCriteria((prev) => ({ ...prev, target_sector: parsed.target_sector }));
+        if (parsed.target_size) setCriteria((prev) => ({ ...prev, target_size: parsed.target_size }));
+        if (parsed.suggested_notes) setCriteria((prev) => ({ ...prev, notes: parsed.suggested_notes }));
+        toast({ title: "IA parametrizou sua busca!", description: parsed.human_readable_summary || "Campos preenchidos automaticamente." });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao analisar", description: e.message, variant: "destructive" });
+    } finally {
+      setNlParsing(false);
+    }
+  };
+
+  const clearNlResult = () => {
+    setNlResult(null);
+    setNlExtraParams({});
+    setNlText("");
+  };
+
   const dimLabels: Record<string, string> = {
     financial_fit: "Financeiro",
     sector_fit: "Setor",
@@ -682,6 +750,92 @@ export default function Matching() {
           {/* === STEP 1: Perfil === */}
           {wizardStep === 1 && (
             <div className="space-y-6">
+              {/* === NATURAL LANGUAGE CARD === */}
+              <Card className="border-2 border-accent/30 bg-accent/5">
+                <CardHeader className="pb-3">
+                  <CardTitle className="font-display flex items-center gap-2 text-base">
+                    <BrainCircuit className="w-5 h-5 text-accent" />
+                    Descreva o que você procura
+                    <Badge variant="outline" className="text-xs ml-1 border-accent/40 text-accent">IA</Badge>
+                  </CardTitle>
+                  <CardDescription>
+                    Escreva em linguagem natural — a IA parametriza os filtros automaticamente e exclui gigantes irrelevantes
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {!nlResult ? (
+                    <>
+                      <Textarea
+                        value={nlText}
+                        onChange={(e) => setNlText(e.target.value)}
+                        placeholder={'Ex: "Tenho uma consultoria financeira que fatura R$5M/ano e quero empresas similares menores para adquirir ou fazer parceria. Não quero bancos nem seguradoras."'}
+                        rows={3}
+                        className="resize-none"
+                      />
+                      <Button
+                        onClick={parseIntent}
+                        disabled={nlParsing || !nlText.trim()}
+                        className="gap-2 bg-accent text-accent-foreground hover:bg-accent/90"
+                      >
+                        {nlParsing ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" />Analisando...</>
+                        ) : (
+                          <><Sparkles className="w-4 h-4" />Deixar IA parametrizar</>
+                        )}
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-success flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />IA parametrizou
+                          </span>
+                          <button onClick={clearNlResult} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+                            <X className="w-3 h-3" />Limpar
+                          </button>
+                        </div>
+                        {nlResult.human_readable_summary && (
+                          <p className="text-sm font-medium text-foreground">{nlResult.human_readable_summary}</p>
+                        )}
+                        <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+                          {nlResult.cnae_prefixes && (
+                            <div className="flex items-start gap-1">
+                              <span className="text-muted-foreground min-w-[80px]">CNAE:</span>
+                              <span className="font-mono font-medium">{nlResult.cnae_prefixes.map(p => `${p}xx`).join(", ")}</span>
+                            </div>
+                          )}
+                          {nlResult.target_size && (
+                            <div className="flex items-start gap-1">
+                              <span className="text-muted-foreground min-w-[80px]">Porte:</span>
+                              <span className="font-medium">{nlResult.target_size}</span>
+                            </div>
+                          )}
+                          {nlResult.max_capital_social_brl && (
+                            <div className="flex items-start gap-1">
+                              <span className="text-muted-foreground min-w-[80px]">Capital máx:</span>
+                              <span className="font-medium">R${(nlResult.max_capital_social_brl / 1e6).toFixed(1)}M</span>
+                            </div>
+                          )}
+                          {nlResult.intent && (
+                            <div className="flex items-start gap-1">
+                              <span className="text-muted-foreground min-w-[80px]">Intenção:</span>
+                              <span className="font-medium capitalize">{nlResult.intent}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setNlResult(null); }}
+                        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                      >
+                        <PencilLine className="w-3 h-3" />Editar descrição
+                      </button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               <Card className="border-primary/20 bg-primary/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="font-display flex items-center gap-2 text-base"><UserCheck className="w-5 h-5 text-primary" />Perfil do Investidor</CardTitle>

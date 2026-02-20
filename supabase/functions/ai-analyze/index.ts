@@ -157,6 +157,52 @@ Provide a comprehensive due diligence analysis.`;
         userPrompt = `Company: ${JSON.stringify(data.company)}\n\nReturn JSON: {"financial_score": ..., "legal_score": ..., "operational_score": ..., "overall_score": ..., "details": {...}, "recommendations": "..."}`;
         break;
 
+      case "parse-intent": {
+        systemPrompt = `Você é um especialista em M&A brasileiro com profundo conhecimento em CNAE (Classificação Nacional de Atividades Econômicas). 
+O usuário irá descrever em linguagem informal o que procura em uma aquisição ou parceria.
+Sua tarefa é extrair parâmetros de busca precisos e retornar APENAS um JSON válido sem markdown.
+
+MAPEAMENTO DE CNAE:
+- Consultoria financeira / gestão financeira / assessoria financeira → cnae_prefixes: ["69", "70"]
+- Bancos / financeiras / crédito → cnae_prefixes: ["64"]
+- Seguros / previdência → cnae_prefixes: ["65"]
+- Fundos / corretoras / mercado financeiro → cnae_prefixes: ["66"]
+- Software / tecnologia / TI / sistemas → cnae_prefixes: ["62", "63"]
+- Comércio / varejo / distribuição → cnae_prefixes: ["45", "46", "47"]
+- Saúde / clínica / hospital / farmácia → cnae_prefixes: ["86", "87", "88"]
+- Educação / ensino / escola → cnae_prefixes: ["85"]
+- Construção / incorporação / obra → cnae_prefixes: ["41", "42", "43"]
+- Transporte / logística → cnae_prefixes: ["49", "50", "51", "52"]
+- Indústria / manufatura / fábrica → cnae_prefixes: ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "23", "24", "25"]
+- Agronegócio / agricultura / pecuária → cnae_prefixes: ["01", "02", "03"]
+- Telecomunicações / telecom → cnae_prefixes: ["61"]
+- Energia → cnae_prefixes: ["35"]
+
+REGRAS DE CAPITAL SOCIAL:
+- Se o usuário menciona faturamento de R$X, estimar capital social máximo como X * 0.5 e mínimo como X * 0.005
+- Empresas com capital social > 10x o faturamento do comprador são irrelevantes (grandes demais)
+- Capital social mínimo: ao menos R$ 10.000 para filtrar informais
+
+Retorne SOMENTE JSON, sem explicações:`;
+
+        userPrompt = `Texto do usuário: "${data.text}"
+
+Retorne JSON com este formato exato:
+{
+  "target_sector": "Finance",
+  "cnae_subtype": "Consulting",
+  "cnae_prefixes": ["69", "70"],
+  "target_size": "Small",
+  "buyer_revenue_brl": 5000000,
+  "max_capital_social_brl": 2500000,
+  "min_capital_social_brl": 10000,
+  "intent": "acquisition",
+  "suggested_notes": "Consultoria financeira buscando empresas similares menores para aquisição ou parceria estratégica",
+  "human_readable_summary": "Consultoria Financeira (CNAE 69xx/70xx) · Pequenas e Startups · Capital até R$2,5M"
+}`;
+        break;
+      }
+
       default:
         throw new Error(`Unknown analysis type: ${type}`);
     }

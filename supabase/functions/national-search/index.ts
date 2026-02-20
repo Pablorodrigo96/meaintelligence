@@ -77,6 +77,10 @@ serve(async (req) => {
       target_sector,
       target_state,
       target_size,
+      cnae_prefixes,       // Array of CNAE prefixes e.g. ["69", "70"] for financial consulting
+      min_capital_social,  // Minimum capital social to filter out micro-informals
+      max_capital_social,  // Maximum capital social to filter out giants (e.g. Itaú)
+      buyer_revenue_brl,   // Buyer's revenue to compute proximity ordering
       raw = false,
       limit,
     } = body;
@@ -113,8 +117,13 @@ serve(async (req) => {
       }
     }
 
-    // CNAE sector filter
-    if (target_sector) {
+    // CNAE filter: specific prefixes take priority over broad sector filter
+    if (cnae_prefixes && Array.isArray(cnae_prefixes) && cnae_prefixes.length > 0) {
+      // Precise sub-sector filter (e.g. ["69","70"] for financial consulting, excludes banks)
+      const cnaeLikes = cnae_prefixes.map((p: string) => `e.cnae_fiscal_principal LIKE '${p}%'`).join(" OR ");
+      conditions.push(`(${cnaeLikes})`);
+    } else if (target_sector) {
+      // Fallback: broad sector filter from CNAE map
       const matchingPrefixes = Object.entries(CNAE_SECTOR_MAP)
         .filter(([, sector]) => sector === target_sector)
         .map(([prefix]) => prefix);
@@ -125,8 +134,31 @@ serve(async (req) => {
       }
     }
 
+    // Capital social filters: prevents giants (Itaú) from dominating results
+    if (max_capital_social != null) {
+      params.push(String(max_capital_social));
+      conditions.push(`em.capital_social <= $${params.length}`);
+    }
+    if (min_capital_social != null) {
+      params.push(String(min_capital_social));
+      conditions.push(`em.capital_social >= $${params.length}`);
+    }
+
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
+    // Ordering: if buyer revenue is known, sort by proximity of capital_social
+    // This ensures consultancies with R$50K-500K capital rank above banks with R$100B
+    let orderClause = "ORDER BY em.capital_social DESC NULLS LAST";
+    if (buyer_revenue_brl != null && buyer_revenue_brl > 0) {
+      const targetCapital = buyer_revenue_brl * 0.15; // typical capital/revenue ratio
+      params.push(String(targetCapital));
+      orderClause = `ORDER BY ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
+    } else if (max_capital_social != null) {
+      // If no buyer revenue but max capital given, still sort by proximity to mid-range
+      const midCapital = max_capital_social * 0.3;
+      params.push(String(midCapital));
+      orderClause = `ORDER BY ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
+    }
 
     const query = `
       SELECT 
@@ -143,7 +175,7 @@ serve(async (req) => {
       FROM estabelecimentos e
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
-      ORDER BY em.capital_social DESC NULLS LAST
+      ${orderClause}
       LIMIT ${effectiveLimit}
     `;
 
