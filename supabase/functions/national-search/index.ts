@@ -85,8 +85,17 @@ serve(async (req) => {
       limit,
     } = body;
 
-    // Layer 1: DB-level filter - return 80 for matching, up to 200 for raw exploration
-    const effectiveLimit = limit ?? (raw ? 200 : 80);
+    // Layer 1: DB-level filter - DISTINCT ON ensures 1 company per cnpj_basico
+    // Use 400 to compensate for DISTINCT deduplication (many establishments per company)
+    const effectiveLimit = limit ?? (raw ? 200 : 400);
+
+    // Capital social caps by sector — prevents giants (Vivo, Itaú, Petrobras) from dominating
+    // when the caller doesn't specify max_capital_social or buyer_revenue_brl
+    const SECTOR_DEFAULT_MAX_CAPITAL: Record<string, number> = {
+      "Telecom": 50_000_000,      // R$50M — excludes Vivo/Claro/TIM (capital >R$1B)
+      "Finance": 100_000_000,     // R$100M — excludes Itaú, Bradesco
+      "Energy": 200_000_000,      // R$200M — excludes Petrobras, Eletrobras
+    };
 
     const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
     const client = new Client(EXTERNAL_DB_URL);
@@ -134,9 +143,13 @@ serve(async (req) => {
       }
     }
 
-    // Capital social filters: prevents giants (Itaú) from dominating results
-    if (max_capital_social != null) {
-      params.push(String(max_capital_social));
+    // Apply sector default cap when max_capital_social not explicitly provided
+    const effectiveMaxCapital: number | null = max_capital_social ??
+      (target_sector ? (SECTOR_DEFAULT_MAX_CAPITAL[target_sector] ?? null) : null);
+
+    // Capital social filters: prevents giants from dominating results
+    if (effectiveMaxCapital != null) {
+      params.push(String(effectiveMaxCapital));
       conditions.push(`em.capital_social <= $${params.length}`);
     }
     if (min_capital_social != null) {
@@ -146,22 +159,24 @@ serve(async (req) => {
 
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
-    // Ordering: if buyer revenue is known, sort by proximity of capital_social
-    // This ensures consultancies with R$50K-500K capital rank above banks with R$100B
-    let orderClause = "ORDER BY em.capital_social DESC NULLS LAST";
+    // DISTINCT ON requires ORDER BY to start with the DISTINCT ON column.
+    // The secondary sort controls which establishment represents each company.
+    let secondaryOrder = "em.capital_social DESC NULLS LAST";
     if (buyer_revenue_brl != null && buyer_revenue_brl > 0) {
       const targetCapital = buyer_revenue_brl * 0.15; // typical capital/revenue ratio
       params.push(String(targetCapital));
-      orderClause = `ORDER BY ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
-    } else if (max_capital_social != null) {
-      // If no buyer revenue but max capital given, still sort by proximity to mid-range
-      const midCapital = max_capital_social * 0.3;
+      secondaryOrder = `ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
+    } else if (effectiveMaxCapital != null) {
+      // Sort by proximity to mid-range of the cap (targets regional companies, not micro)
+      const midCapital = effectiveMaxCapital * 0.3;
       params.push(String(midCapital));
-      orderClause = `ORDER BY ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
+      secondaryOrder = `ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
     }
 
+    // DISTINCT ON (cnpj_basico) = 1 result per company, regardless of branch count
+    // This prevents Telefônica's 500 branches from filling all 25 slots
     const query = `
-      SELECT 
+      SELECT DISTINCT ON (e.cnpj_basico)
         e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv AS cnpj_completo,
         e.cnpj_basico,
         e.nome_fantasia,
@@ -175,9 +190,10 @@ serve(async (req) => {
       FROM estabelecimentos e
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
-      ${orderClause}
+      ORDER BY e.cnpj_basico, ${secondaryOrder}
       LIMIT ${effectiveLimit}
     `;
+
 
     console.log("Executing query with params:", params);
 
