@@ -46,17 +46,34 @@ function mapCnaeToSector(cnae: string | null): string {
   return CNAE_SECTOR_MAP[prefix] || "Other";
 }
 
-// Map Receita Federal porte to internal size
+// Map Receita Federal porte_empresa to internal size
+// Values: 00=Não informado, 01=Micro Empresa, 03=Empresa de Pequeno Porte, 05=Demais
 function mapPorteToSize(porte: string | null): string {
   if (!porte) return "Small";
-  const p = porte.toUpperCase();
-  if (p.includes("MEI") || p === "00") return "Startup";
-  if (p.includes("ME") || p.includes("MICRO") || p === "01") return "Small";
-  if (p.includes("EPP") || p.includes("PEQUENA") || p === "03") return "Small";
-  if (p.includes("MEDIA") || p.includes("MÉDIO") || p === "05") return "Medium";
-  if (p.includes("GRANDE") || p === "05") return "Large";
+  const p = porte.trim();
+  if (p === "00") return "Startup";
+  if (p === "01") return "Small";
+  if (p === "03") return "Small";
+  if (p === "05") return "Medium";
   return "Small";
 }
+
+// Receita Federal municipality codes for major cities
+// The RF uses a sequential code different from IBGE
+const RF_MUNICIPIO_MAP: Record<string, string> = {
+  "7107": "São Paulo", "6477": "São Paulo", "6569": "São Paulo",
+  "9999": "São Paulo", "7071": "São Paulo",
+  "6001": "Porto Alegre", "6000": "Brasília", "5983": "Curitiba",
+  "5991": "Fortaleza", "6003": "Recife", "6019": "Salvador",
+  "6007": "Belo Horizonte", "6023": "Manaus", "6015": "Belém",
+  "6011": "Goiânia", "6029": "São Luís", "6031": "Natal",
+  "6033": "Teresina", "6037": "Campo Grande", "6039": "Cuiabá",
+  "6043": "Aracaju", "6045": "Maceió", "6047": "João Pessoa",
+  "6049": "Porto Velho", "6051": "Macapá", "6055": "Palmas",
+  "6057": "Rio Branco", "6059": "Boa Vista",
+  // Rio de Janeiro
+  "6001": "Rio de Janeiro",
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -76,40 +93,25 @@ serve(async (req) => {
       target_state,
       target_size,
       limit = 150,
-      // Table/column config (with Receita Federal defaults)
-      table_name = "estabelecimentos",
-      col_cnpj = "cnpj",
-      col_razao_social = "razao_social",
-      col_nome_fantasia = "nome_fantasia",
-      col_cnae = "cnae_fiscal",
-      col_uf = "uf",
-      col_municipio = "municipio",
-      col_porte = "porte",
-      col_capital_social = "capital_social",
-      col_situacao = "situacao_cadastral",
-      situacao_ativa = "ATIVA",
     } = body;
 
-    // Dynamic import of postgres driver
     const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
-
     const client = new Client(EXTERNAL_DB_URL);
     await client.connect();
 
-    // Build parameterized query dynamically
+    // Build conditions
+    const conditions: string[] = ["e.situacao_cadastral = '02'"]; // 02 = ATIVA
     const params: string[] = [];
-    const conditions: string[] = [`${col_situacao} = '${situacao_ativa}'`];
 
     if (target_state) {
-      params.push(target_state);
-      conditions.push(`${col_uf} = $${params.length}`);
+      params.push(target_state.toUpperCase());
+      conditions.push(`e.uf = $${params.length}`);
     }
 
     if (target_size) {
-      // Map internal size to Receita Federal porte codes
       const porteMap: Record<string, string[]> = {
-        "Startup": ["MEI", "00"],
-        "Small": ["ME", "01", "03"],
+        "Startup": ["00"],
+        "Small": ["01", "03"],
         "Medium": ["05"],
         "Large": ["05"],
         "Enterprise": ["05"],
@@ -118,43 +120,64 @@ serve(async (req) => {
       if (portes && portes.length > 0) {
         const placeholders = portes.map((_, i) => `$${params.length + i + 1}`).join(", ");
         params.push(...portes);
-        conditions.push(`${col_porte} IN (${placeholders})`);
+        conditions.push(`em.porte_empresa IN (${placeholders})`);
       }
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    // CNAE filter for sector (using LIKE on cnae prefix)
-    let cnaeCondition = "";
+    // CNAE sector filter
     if (target_sector) {
-      // Find CNAE prefixes that match the sector
       const matchingPrefixes = Object.entries(CNAE_SECTOR_MAP)
         .filter(([, sector]) => sector === target_sector)
         .map(([prefix]) => prefix);
-      
+
       if (matchingPrefixes.length > 0) {
-        const cnaeLikes = matchingPrefixes.map((prefix) => `${col_cnae}::text LIKE '${prefix}%'`).join(" OR ");
-        cnaeCondition = conditions.length > 0 ? ` AND (${cnaeLikes})` : ` WHERE (${cnaeLikes})`;
+        const cnaeLikes = matchingPrefixes.map((prefix) => `e.cnae_fiscal_principal LIKE '${prefix}%'`).join(" OR ");
+        conditions.push(`(${cnaeLikes})`);
       }
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+    // Check if municipios table exists for city name resolution
+    let municipioMap: Record<string, string> = { ...RF_MUNICIPIO_MAP };
+    try {
+      const municipiosCheck = await client.queryObject(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables 
+          WHERE table_schema = 'public' AND table_name = 'municipios'
+        ) as exists
+      `);
+      const hasTable = (municipiosCheck.rows[0] as any)?.exists;
+      if (hasTable) {
+        const muniResult = await client.queryObject(`SELECT codigo, descricao FROM municipios LIMIT 6000`);
+        for (const row of muniResult.rows as any[]) {
+          municipioMap[String(row.codigo)] = row.descricao;
+        }
+      }
+    } catch (_) {
+      // No municipios table, use built-in map
     }
 
     const query = `
       SELECT 
-        ${col_cnpj} as cnpj,
-        ${col_razao_social} as razao_social,
-        ${col_nome_fantasia} as nome_fantasia,
-        ${col_cnae} as cnae_fiscal,
-        ${col_uf} as uf,
-        ${col_municipio} as municipio,
-        ${col_porte} as porte,
-        ${col_capital_social} as capital_social
-      FROM ${table_name}
-      ${whereClause}${cnaeCondition}
-      ORDER BY ${col_capital_social} DESC NULLS LAST
+        e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv AS cnpj_completo,
+        e.cnpj_basico,
+        e.nome_fantasia,
+        e.cnae_fiscal_principal,
+        e.uf,
+        e.municipio,
+        e.situacao_cadastral,
+        em.razao_social,
+        em.capital_social,
+        em.porte_empresa
+      FROM estabelecimentos e
+      INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
+      ${whereClause}
+      ORDER BY em.capital_social DESC NULLS LAST
       LIMIT ${Math.min(limit, 200)}
     `;
 
-    console.log("Executing query:", query, "params:", params);
+    console.log("Executing query with params:", params);
 
     const result = await client.queryObject({
       text: query,
@@ -165,24 +188,26 @@ serve(async (req) => {
 
     // Map to internal company format
     const companies = (result.rows as any[]).map((row) => {
-      const cnpj = String(row.cnpj || "").replace(/\D/g, "");
+      const cnpj = String(row.cnpj_completo || row.cnpj_basico || "").replace(/\D/g, "");
       const capitalSocial = parseFloat(row.capital_social) || null;
-      
+      const municipioCod = String(row.municipio || "");
+      const cityName = municipioMap[municipioCod] || municipioCod;
+
       return {
         id: cnpj || `ext_${Math.random().toString(36).substr(2, 9)}`,
         name: row.nome_fantasia || row.razao_social || "Empresa sem nome",
         cnpj: cnpj || null,
-        sector: mapCnaeToSector(row.cnae_fiscal),
+        sector: mapCnaeToSector(row.cnae_fiscal_principal),
         state: row.uf || null,
-        city: row.municipio || null,
-        size: mapPorteToSize(row.porte),
-        revenue: capitalSocial ? capitalSocial * 2 : null, // capital social proxy
+        city: cityName,
+        size: mapPorteToSize(row.porte_empresa),
+        revenue: capitalSocial ? capitalSocial * 2 : null,
         ebitda: null,
         cash_flow: null,
         debt: null,
         risk_level: "Medium",
-        description: `CNAE: ${row.cnae_fiscal || "N/A"} | Porte: ${row.porte || "N/A"} | Capital Social: ${capitalSocial ? `R$${(capitalSocial/1000).toFixed(0)}K` : "N/A"}`,
-        location: `${row.municipio || ""}, ${row.uf || ""}`.trim().replace(/^,\s*/, ""),
+        description: `CNAE: ${row.cnae_fiscal_principal || "N/A"} | Porte: ${row.porte_empresa || "N/A"} | Capital Social: ${capitalSocial ? `R$${(capitalSocial / 1000).toFixed(0)}K` : "N/A"}`,
+        location: `${cityName}, ${row.uf || ""}`.trim().replace(/^,\s*/, ""),
         source: "national_db",
       };
     });
