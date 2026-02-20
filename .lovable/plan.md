@@ -1,165 +1,206 @@
 
-## Diagnóstico: Como funciona o fluxo atual
+## Aprofundamento Inteligente das Empresas Pré-Selecionadas
 
-O fluxo atual tem 3 etapas sequenciais sem pré-filtragem eficiente:
+### O Problema Atual
 
-```text
-[BD Externo] → 150 empresas brutas
-       ↓
-[IA: ai-analyze] → analisa TODAS as 150 de uma vez (payload gigante)
-       ↓
-[Frontend] → salva todas no banco local como matches
-```
+O `DeepDiveDialog` e o edge function `company-deep-dive` já existem, mas são básicos:
+- Estimativa de receita usa apenas: `benchmark_setor × regime_fiscal × capital_ratio × localização`
+- Não há estimativa de funcionários, nem faixa de cluster
+- Não há cálculo de massa salarial estimada
+- Não há análise de maturidade (idade vs. funcionários)
+- A IA recebe os dados brutos e gera um texto genérico sem estrutura
 
-**Por que demora tanto:**
-- A `national-search` busca 150 registros ordenados por capital social (simples, rápido)
-- Todas as 150 são serializadas em JSON e enviadas em um único prompt para a IA
-- A IA analisa empresa por empresa, retorna 150 objetos JSON com scores e análises
-- O frontend faz N inserts no banco (uma por empresa que a IA retornou)
-- Não há etapa de descarte antes da IA: empresas obviamente irrelevantes "gastam" tokens
+### A Nova Arquitetura: Motor de Inteligência de 5 Camadas
 
----
-
-## Proposta: Pipeline de 3 Camadas com Funil Visível
-
-### Camada 1 — Filtro no BD (já existe, mas será fortalecido)
-
-A `national-search` já filtra por setor, estado e porte. Vamos tornar esses filtros mais restritivos para devolver **no máximo 50 candidatos pré-qualificados** ao invés de 150.
-
-- Reduzir o `limit` default de 150 para 50 nas chamadas normais
-- Adicionar um campo `pre_filter_count` na resposta para rastrear quantas passaram pelo BD
-
-### Camada 2 — Pré-score no Edge Function (NOVO: sem IA)
-
-Criar uma etapa de **pontuação determinística** no `ai-analyze` antes de chamar a IA. Essa etapa roda no servidor em milissegundos:
+Cada empresa pré-selecionada passará por 5 layers de análise determinística ANTES da IA:
 
 ```text
-Para cada empresa recebida:
-  - sector_match: setor da empresa == setor alvo? (+40)
-  - size_match: porte == porte alvo? (+20)  
-  - state_match: UF == estado alvo? (+20)
-  - has_capital: tem capital_social > 0? (+10)
-  - cnpj_valid: CNPJ tem 14 dígitos? (+10)
-  pre_score = soma dos pontos (0-100)
-```
-
-Empresas com `pre_score < 30` são descartadas antes de ir para a IA.
-Apenas as **top 25** por `pre_score` seguem para análise pela IA.
-
-### Camada 3 — IA analisa apenas os pré-selecionados
-
-Com 25 empresas ao invés de 150, o prompt fica ~6x menor → resposta ~6x mais rápida.
-
-### Funil Visual no Frontend
-
-Mostrar durante e após o processo um card de funil com os números reais:
-
-```text
-┌─────────────────────────────────────┐
-│  FUNIL DE SELEÇÃO                   │
-│                                     │
-│  Base Nacional  →  150 registros    │
-│  Filtro BD      →   50 candidatos   │
-│  Pré-score      →   25 qualificados │
-│  Análise IA     →   25 analisados   │
-│  Score ≥ 40     →   18 matches      │
-└─────────────────────────────────────┘
+[BrasilAPI: dados do CNPJ]
+        ↓
+Layer 1: Capital Social → Cluster de Porte
+Layer 2: CNAE → Modelo de Negócio + Benchmarks Setoriais
+Layer 3: Idade da Empresa → Sinal de Maturidade/Crescimento
+Layer 4: Estimativa de Funcionários (por faixa)
+Layer 5: Massa Salarial Estimada → Faturamento por Inversão
+        ↓
+[IA: análise qualitativa sobre dados estruturados]
 ```
 
 ---
 
-## O que será alterado
+### Detalhamento de Cada Layer
 
-### 1. `supabase/functions/ai-analyze/index.ts`
-
-Adicionar lógica de pré-score **antes** da chamada à IA no case `"match"`:
-
+**Layer 1 — Capital Social → Cluster de Porte**
 ```typescript
-// Pré-score determinístico (sem IA)
-const preScored = companies.map(c => {
-  let score = 0;
-  if (criteria.target_sector && c.sector === criteria.target_sector) score += 40;
-  if (criteria.target_size && c.size === criteria.target_size) score += 20;
-  if (criteria.target_state && c.state === criteria.target_state) score += 20;
-  if (c.revenue || c.capital_social) score += 10;
-  if (c.cnpj?.length >= 14) score += 10;
-  return { ...c, pre_score: score };
-});
-
-const preFiltered = preScored
-  .filter(c => c.pre_score >= 30)
-  .sort((a, b) => b.pre_score - a.pre_score)
-  .slice(0, 25);
-
-// Logar o funil
-console.log(`Funil: ${companies.length} recebidas → ${preFiltered.length} para IA`);
+function capitalCluster(capital: number): { label: string; tier: number } {
+  if (capital < 10_000)   return { label: "Micro informal", tier: 1 };
+  if (capital < 100_000)  return { label: "Micro estruturada", tier: 2 };
+  if (capital < 500_000)  return { label: "Pequena", tier: 3 };
+  if (capital < 2_000_000) return { label: "Média estruturada", tier: 4 };
+  if (capital < 10_000_000) return { label: "Grande / Tese definida", tier: 5 };
+  return { label: "Corporação", tier: 6 };
+}
 ```
 
-Retornar também os metadados do funil na resposta:
+**Layer 2 — CNAE → Modelo de Negócio**
+
+Expansão dos benchmarks setoriais com 3 métricas por setor:
+- `payroll_pct`: % da receita representado pela folha salarial
+- `rev_per_employee`: receita por funcionário (em R$)
+- `margin_profile`: "alta margem", "margem baixa / giro alto", "previsível", etc.
+
 ```typescript
-return { result: parsed, funnel: { received: companies.length, pre_filtered: preFiltered.length } }
+const CNAE_BUSINESS_MODEL: Record<string, {
+  payroll_pct: number;
+  rev_per_employee: number;
+  margin_profile: string;
+  model_label: string;
+}> = {
+  "Tecnologia":   { payroll_pct: 0.40, rev_per_employee: 500_000, margin_profile: "Alta margem", model_label: "Software / SaaS" },
+  "Comércio":     { payroll_pct: 0.12, rev_per_employee: 200_000, margin_profile: "Margem baixa, giro alto", model_label: "Distribuição / Varejo" },
+  "Indústria":    { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Capital intensivo", model_label: "Produção industrial" },
+  "Saúde":        { payroll_pct: 0.35, rev_per_employee: 180_000, margin_profile: "Estável regulado", model_label: "Serviços de saúde" },
+  "Logística":    { payroll_pct: 0.25, rev_per_employee: 200_000, margin_profile: "Margem operacional apertada", model_label: "Transporte / Armazenagem" },
+  "Agronegócio":  { payroll_pct: 0.15, rev_per_employee: 300_000, margin_profile: "Cíclico / Commodity", model_label: "Produção agrícola" },
+  "Finanças":     { payroll_pct: 0.30, rev_per_employee: 400_000, margin_profile: "Alta alavancagem", model_label: "Serviços financeiros" },
+  "Educação":     { payroll_pct: 0.45, rev_per_employee: 120_000, margin_profile: "Escala de alunos", model_label: "Ensino e treinamento" },
+  "Construção":   { payroll_pct: 0.22, rev_per_employee: 220_000, margin_profile: "Ciclo longo", model_label: "Incorporação / Obras" },
+  "Energia":      { payroll_pct: 0.18, rev_per_employee: 350_000, margin_profile: "Capital intensivo regulado", model_label: "Geração / Distribuição" },
+  "Imobiliário":  { payroll_pct: 0.20, rev_per_employee: 250_000, margin_profile: "Ciclo longo / Ativo intensivo", model_label: "Gestão imobiliária" },
+  "Serviços":     { payroll_pct: 0.38, rev_per_employee: 150_000, margin_profile: "Serviço profissional", model_label: "Prestação de serviços" },
+};
 ```
 
-### 2. `supabase/functions/national-search/index.ts`
+**Layer 3 — Idade da Empresa → Sinal de Maturidade**
 
-- Mudar o `limit` máximo: quando chamado pelo matching (sem `raw` flag), busca 80 registros do BD; quando chamado com `raw: true`, retorna até 200 para exploração manual.
-- Incluir `db_count` na resposta para o funil.
-
-### 3. `src/pages/Matching.tsx`
-
-**A) Novo estado para o funil:**
+Cruzamento entre anos de existência e porte para classificar a empresa:
 ```typescript
-const [funnelStats, setFunnelStats] = useState<{
-  db_fetched: number;
-  pre_filtered: number;
-  ai_analyzed: number;
-  final_matches: number;
-} | null>(null);
+function maturitySignal(yearsActive: number, capitalTier: number): {
+  signal: "crescimento_acelerado" | "maturidade_consolidada" | "estagnacao_estrutural" | "startup_nascente";
+  label: string;
+  insight: string;
+}
 ```
 
-**B) Capturar dados do funil durante o `runMatchMutation`:**
-- Após `national-search`: registrar `db_fetched = nationalData.total`
-- Após `ai-analyze`: registrar `pre_filtered` e `ai_analyzed` da resposta
-- Após salvar matches: registrar `final_matches = results.length`
+- < 3 anos, tier 4+: "Crescimento acelerado — alto potencial, alto risco"
+- > 15 anos, tier 2-3: "Estagnação estrutural — cuidado com EBITDA"
+- 5-15 anos, tier 3-5: "Maturidade consolidada — perfil ideal para M&A"
+- < 2 anos qualquer: "Empresa nascente — DD aprofundada necessária"
 
-**C) Card de funil visual (novo componente inline):**
-Exibir abaixo do progresso durante a análise e nos resultados:
+**Layer 4 — Estimativa de Funcionários por Faixa**
+
+Derivado do cruzamento: capital social + setor + localização:
+```typescript
+// rev_per_employee do setor → funcionários estimados
+const estimatedEmployees = estimatedRevenue / sectorModel.rev_per_employee;
+
+// Enquadrar na faixa de cluster
+function employeeCluster(n: number): string {
+  if (n < 10)  return "1–10";
+  if (n < 30)  return "10–30";
+  if (n < 80)  return "30–80";
+  if (n < 200) return "80–200";
+  if (n < 500) return "200–500";
+  return "500+";
+}
+```
+
+**Layer 5 — Massa Salarial → Faturamento por Inversão**
+
+O método mais inteligente, conforme descrito pelo usuário:
+```typescript
+const salarioMedioSetor: Record<string, number> = {
+  "Tecnologia": 8_000,
+  "Comércio": 2_500,
+  "Saúde": 4_500,
+  // ...
+};
+
+// Estimativa por massa salarial
+const avgSalary = salarioMedioSetor[sector];
+const estimatedEmployeesCount = estimatedEmployees; // do layer 4
+const monthlyPayroll = avgSalary * estimatedEmployeesCount;
+const annualPayroll = monthlyPayroll * 12;
+const revenueFromPayroll = annualPayroll / sectorModel.payroll_pct;
+
+// Score de confiança cruzado (dois métodos)
+const revMethod1 = estimatedRevenueBenchmark; // método antigo
+const revMethod2 = revenueFromPayroll;        // método novo (massa salarial)
+const convergence = Math.abs(revMethod1 - revMethod2) / Math.max(revMethod1, revMethod2);
+// convergence < 0.3 → alta confiança (os dois métodos concordam)
+```
+
+---
+
+### O que será alterado
+
+**1. `supabase/functions/company-deep-dive/index.ts`**
+
+Adicionar as 5 layers determinísticas antes da IA:
+
+- Expandir `SECTOR_BENCHMARKS` com `CNAE_BUSINESS_MODEL` (payroll_pct, rev_per_employee, margin_profile, model_label)
+- Adicionar tabela de salários médios por setor `AVG_SALARY_BY_SECTOR`
+- Implementar funções: `capitalCluster()`, `maturitySignal()`, `employeeCluster()`, `calcMassaSalarial()`
+- Retornar novo objeto `intelligence` por empresa com todos os layers calculados
+- Atualizar o prompt da IA para usar os dados estruturados (não mais dados brutos) e gerar análise em seções específicas: Porte Real, Maturidade, Estimativas Financeiras, Sinais de Alerta
+
+**2. `src/components/DeepDiveDialog.tsx`**
+
+Expandir a interface TypeScript para incluir o novo campo `intelligence`:
+```typescript
+interface Intelligence {
+  capital_cluster: { label: string; tier: number };
+  employee_cluster: string;
+  estimated_employees: number;
+  maturity_signal: { signal: string; label: string; insight: string };
+  business_model: { model_label: string; margin_profile: string; payroll_pct: number };
+  revenue_method1_brl: number;  // benchmark setorial
+  revenue_method2_brl: number;  // inversão massa salarial
+  monthly_payroll_brl: number;
+  annual_payroll_brl: number;
+  convergence_pct: number;      // % de divergência entre os 2 métodos
+  confidence_score: number;
+}
+```
+
+Redesenhar o card de cada empresa com seções visuais:
+
+- **Seção "Radiografia da Empresa"**: capital cluster (badge colorido por tier), maturidade (badge com ícone de sinal), modelo de negócio
+- **Seção "Estimativa de Equipe"**: faixa de funcionários em destaque visual + salário médio estimado + massa salarial mensal
+- **Seção "Estimativa de Faturamento (2 métodos)"**: lado a lado, Método 1 (Benchmark Setorial) vs Método 2 (Inversão Massa Salarial), com indicador de convergência
+- **Seção "Sinais de Alerta"**: ícones coloridos por criticidade (ex: "Empresa antiga com capital baixo → risco de estagnação")
+
+---
+
+### Nova UI do DeepDiveDialog
 
 ```text
-Base Nacional → Filtro BD → Pré-score → IA → Matches finais
-    150            80           25       25       18
+┌──────────────────────────────────────────────────────────┐
+│  EMPRESA XYZ LTDA  ●  ATIVA  ●  CNPJ: 12.345.678/0001-99 │
+├──────────────────────────────────────────────────────────┤
+│  RADIOGRAFIA                                              │
+│  [Pequena estruturada]  [Maturidade consolidada ●12 anos] │
+│  Modelo: Software / SaaS  ·  Margem: Alta                 │
+├──────────────────────────────────────────────────────────┤
+│  ESTIMATIVA DE EQUIPE                                     │
+│  Faixa: 30–80 funcionários                               │
+│  Salário médio setor: R$ 8.000/mês                       │
+│  Massa salarial estimada: R$ 400.000/mês                  │
+├──────────────────────────────────────────────────────────┤
+│  FATURAMENTO (2 MÉTODOS)                                  │
+│  Método 1 — Benchmark:     R$ 5.000.000/ano              │
+│  Método 2 — Massa Salarial: R$ 6.000.000/ano             │
+│  Convergência: 83% ●● Alta confiança                      │
+├──────────────────────────────────────────────────────────┤
+│  ANÁLISE IA                                               │
+│  "Esta empresa apresenta perfil de crescimento...         │
+│   Pontos de atenção: ... Recomendação: ..."               │
+└──────────────────────────────────────────────────────────┘
 ```
-
-Cada etapa com um ícone (Database → Filter → Zap → Star) e a taxa de conversão entre etapas.
-
-**D) Progress steps mais granulares:**
-Atualizar `PROGRESS_STEPS` para refletir as novas etapas:
-```typescript
-{ label: "Buscando no banco nacional...", pct: 10 },
-{ label: "Aplicando pré-filtros...", pct: 30 },
-{ label: "Enviando para IA (top candidatos)...", pct: 50 },
-{ label: "Analisando compatibilidade...", pct: 75 },
-{ label: "Salvando resultados...", pct: 90 },
-```
-
-**E) Mostrar o funil nos resultados:**
-No topo da aba "Resultados", exibir um banner colapsável com o funil da última busca.
 
 ---
 
-## Impacto esperado
+### Arquivos a modificar
 
-| Métrica | Antes | Depois |
-|---|---|---|
-| Empresas enviadas para IA | 150 | ~25 |
-| Tamanho do prompt | ~60KB | ~10KB |
-| Tempo de resposta da IA | 45-90s | 10-20s |
-| Visibilidade do processo | Nenhuma | Funil completo |
-
----
-
-## Arquivos a modificar
-
-1. `supabase/functions/ai-analyze/index.ts` — pré-score + metadados do funil
-2. `supabase/functions/national-search/index.ts` — ajuste de limite e `db_count`
-3. `src/pages/Matching.tsx` — estado do funil, progress steps e componente visual
+1. `supabase/functions/company-deep-dive/index.ts` — 5 layers de inteligência + prompt IA estruturado
+2. `src/components/DeepDiveDialog.tsx` — nova interface TypeScript + redesign visual dos cards
