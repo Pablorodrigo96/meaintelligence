@@ -1,31 +1,38 @@
 
-## Atualizar a Connection String e Testar a Conexão
+## Problema
 
-Recebi a connection string completa. Aqui está o que vou fazer:
+O campo `municipio` na tabela `estabelecimentos` do banco externo usa o código numérico próprio da Receita Federal (ex: `6547`, `7181`, `4123`), que é diferente do código IBGE. O banco externo não possui tabela de municípios, e o mapeamento atual (`RF_MUNICIPIO_MAP`) só cobre ~20 cidades principais. Cidades menores aparecem como código numérico bruto na interface.
 
-### 1. Atualizar o Secret EXTERNAL_DB_URL
+## Solução: Mapeamento Completo Embutido no Edge Function
 
-Vou atualizar o secret `EXTERNAL_DB_URL` com a string correta:
-```
-postgresql://postgres:uHEZgMiTpNGohUYB@db.oyarjshdqeaatlmlzvbx.supabase.co:5432/postgres
-```
+A abordagem mais robusta é incorporar o mapeamento completo dos ~5570 municípios diretamente no código do Edge Function como um objeto estático. Isso elimina qualquer dependência de tabelas externas, zero latência adicional de consulta e resolução 100% dos códigos.
 
-### 2. Testar a conexão imediatamente
+Os códigos da Receita Federal são disponibilizados publicamente no arquivo de layout dos dados abertos do CNPJ (`municipios.json`/`municipios.csv`) e seguem uma numeração sequencial de 4 dígitos.
 
-Após atualizar, vou chamar a edge function `national-search` diretamente para verificar se a conexão com o banco externo funciona. O teste vai buscar empresas em SP para confirmar que os dados chegam corretamente.
+## O que será alterado
 
-### 3. Verificar o schema das tabelas
+### `supabase/functions/national-search/index.ts`
 
-A edge function já está configurada com os nomes padrão da Receita Federal:
-- Tabela: `estabelecimentos`
-- Colunas: `cnpj`, `razao_social`, `nome_fantasia`, `cnae_fiscal`, `uf`, `municipio`, `porte`, `capital_social`, `situacao_cadastral`
+1. **Remover** o `RF_MUNICIPIO_MAP` parcial atual (que tinha apenas ~20 cidades e até uma duplicata — `"6001"` aparecia duas vezes, mapeando para Porto Alegre e Rio de Janeiro).
 
-Se o seu banco tiver nomes diferentes, ajusto o código na hora.
+2. **Adicionar** o objeto `RF_MUNICIPIOS` completo com todos os ~5570 municípios brasileiros no formato `"codigo": "Nome do Município"`. Os códigos da RF vão de 1 dígito a 4 dígitos (ex: `"0001"` a `"9999"`), derivados do arquivo público da Receita Federal.
 
-### 4. Confirmar o Matching Base Nacional
+3. **Remover** a lógica de checagem da tabela `municipios` no banco externo (bloco `try/catch` com `queryObject` para `information_schema.tables`) — essa consulta extra adicionava latência e já sabemos que a tabela não existe.
 
-Depois da conexão verificada, o botão "Base Nacional" na tela de Matching estará funcionando — consultando os 5M+ registros do seu banco externo, filtrando pelos critérios da busca, e passando os candidatos para a IA pontuar.
+4. **Simplificar** a função de resolução de município:
+   ```typescript
+   // Antes: consulta ao banco + fallback para mapa parcial
+   // Depois: lookup direto no mapa completo
+   const cityName = RF_MUNICIPIOS[municipioCod] || municipioCod;
+   ```
 
----
+## Impacto
 
-**Nota de segurança**: A senha ficará armazenada de forma criptografada no cofre de secrets — nunca aparece no código ou nos logs.
+- Todos os resultados do matching Base Nacional passam a exibir o nome correto da cidade
+- Latência da edge function reduzida (eliminamos 2 queries extras ao banco externo por chamada)
+- Zero dependência de tabela externa para resolução de municípios
+- Correção do bug de duplicata na chave `"6001"` (Porto Alegre vs Rio de Janeiro)
+
+## Técnico: Fonte dos Dados
+
+O mapeamento completo será baseado no arquivo oficial `municipios.json` disponibilizado pela Receita Federal junto com os dados públicos do CNPJ, contendo os 5570 municípios com seus respectivos códigos RF de 4 dígitos.
