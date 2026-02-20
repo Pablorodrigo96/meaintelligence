@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
@@ -116,6 +116,8 @@ const PROGRESS_STEPS = [
   { label: "Salvando matches...", pct: 95 },
 ];
 
+type SearchSource = "carteira" | "nacional";
+
 export default function Matching() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -130,6 +132,8 @@ export default function Matching() {
   const [progressStep, setProgressStep] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [geoOpen, setGeoOpen] = useState(false);
+  const [searchSource, setSearchSource] = useState<SearchSource>("carteira");
+  const [nationalCompanies, setNationalCompanies] = useState<any[]>([]);
 
   const [criteria, setCriteria] = useState({
     target_sector: "",
@@ -228,10 +232,42 @@ export default function Matching() {
 
   const runMatchMutation = useMutation({
     mutationFn: async () => {
-      if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios.");
-
       setProgressStep(0);
       const advanceProgress = (step: number) => setProgressStep(step);
+
+      let companiesToAnalyze: any[] = [];
+
+      if (searchSource === "nacional") {
+        // Step 1: Fetch from national database
+        advanceProgress(1);
+        const { data: nationalData, error: nationalError } = await supabase.functions.invoke("national-search", {
+          body: {
+            target_sector: criteria.target_sector || null,
+            target_state: criteria.target_state || null,
+            target_size: criteria.target_size || null,
+            limit: 150,
+          },
+        });
+
+        if (nationalError) throw new Error(`Erro ao buscar Base Nacional: ${nationalError.message}`);
+        if (nationalData?.error) throw new Error(`Erro na Base Nacional: ${nationalData.error}`);
+
+        companiesToAnalyze = nationalData?.companies || [];
+        setNationalCompanies(companiesToAnalyze);
+
+        if (companiesToAnalyze.length === 0) {
+          throw new Error("Nenhuma empresa encontrada na Base Nacional com esses critérios. Tente ampliar os filtros.");
+        }
+      } else {
+        // Minha Carteira mode
+        if (filteredCompanies.length === 0) throw new Error("Nenhuma empresa corresponde aos seus critérios.");
+        companiesToAnalyze = filteredCompanies.map((c) => {
+          const dist = refCityData && c.latitude != null && c.longitude != null
+            ? haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude)
+            : null;
+          return { ...c, distance_km: dist ? Math.round(dist) : null };
+        });
+      }
 
       advanceProgress(1);
       const saveCriteria = {
@@ -253,12 +289,6 @@ export default function Matching() {
       await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
 
       advanceProgress(2);
-      const companiesWithGeo = filteredCompanies.map((c) => {
-        const dist = refCityData && c.latitude != null && c.longitude != null
-          ? haversineDistance(refCityData.lat, refCityData.lng, c.latitude, c.longitude)
-          : null;
-        return { ...c, distance_km: dist ? Math.round(dist) : null };
-      });
 
       const { data, error } = await supabase.functions.invoke("ai-analyze", {
         body: {
@@ -269,7 +299,7 @@ export default function Matching() {
               reference_city: criteria.geo_reference_city,
               radius_km: criteria.no_geo_limit ? null : criteria.geo_radius_km,
             },
-            companies: companiesWithGeo,
+            companies: companiesToAnalyze,
             investor_profile: investorProfile,
           },
         },
@@ -281,23 +311,59 @@ export default function Matching() {
 
       advanceProgress(4);
       const results = Array.isArray(data.result) ? data.result : [];
+      
       for (const match of results) {
-        const company = filteredCompanies.find((c) => c.id === match.company_id);
+        const company = companiesToAnalyze.find((c: any) => c.id === match.company_id);
         if (company) {
-          await supabase.from("matches").insert({
-            buyer_id: user!.id,
-            seller_company_id: company.id,
-            compatibility_score: match.compatibility_score,
-            ai_analysis: JSON.stringify({
-              analysis: match.analysis,
-              dimensions: match.dimensions,
-              dimension_explanations: match.dimension_explanations,
-              recommendation: match.recommendation,
-              strengths: match.strengths || [],
-              weaknesses: match.weaknesses || [],
-            }),
-            status: "new",
-          });
+          if (searchSource === "nacional") {
+            // For national companies, save to local companies table first
+            const { data: savedCompany } = await supabase.from("companies").insert({
+              user_id: user!.id,
+              name: company.name,
+              cnpj: company.cnpj,
+              sector: company.sector,
+              state: company.state,
+              city: company.city,
+              size: company.size,
+              revenue: company.revenue,
+              description: company.description,
+              status: "active",
+              risk_level: "medium",
+            }).select().single();
+
+            if (savedCompany) {
+              await supabase.from("matches").insert({
+                buyer_id: user!.id,
+                seller_company_id: savedCompany.id,
+                compatibility_score: match.compatibility_score,
+                ai_analysis: JSON.stringify({
+                  analysis: match.analysis,
+                  dimensions: match.dimensions,
+                  dimension_explanations: match.dimension_explanations,
+                  recommendation: match.recommendation,
+                  strengths: match.strengths || [],
+                  weaknesses: match.weaknesses || [],
+                  source: "national_db",
+                }),
+                status: "new",
+              });
+            }
+          } else {
+            await supabase.from("matches").insert({
+              buyer_id: user!.id,
+              seller_company_id: company.id,
+              compatibility_score: match.compatibility_score,
+              ai_analysis: JSON.stringify({
+                analysis: match.analysis,
+                dimensions: match.dimensions,
+                dimension_explanations: match.dimension_explanations,
+                recommendation: match.recommendation,
+                strengths: match.strengths || [],
+                weaknesses: match.weaknesses || [],
+              }),
+              status: "new",
+            });
+          }
         }
       }
       advanceProgress(5);
@@ -484,6 +550,46 @@ export default function Matching() {
               ))}
             </div>
           )}
+
+          {/* === SOURCE TOGGLE === */}
+          <Card className="border-2 border-primary/20">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted w-fit">
+                <button
+                  onClick={() => setSearchSource("carteira")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    searchSource === "carteira"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                  Minha Carteira
+                  {searchSource === "carteira" && (
+                    <Badge variant="secondary" className="text-xs ml-1">{companies.length}</Badge>
+                  )}
+                </button>
+                <button
+                  onClick={() => setSearchSource("nacional")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    searchSource === "nacional"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Database className="w-4 h-4" />
+                  Base Nacional
+                  <Badge className="text-xs ml-1 bg-primary/15 text-primary border-primary/30">5M+</Badge>
+                </button>
+              </div>
+              {searchSource === "nacional" && (
+                <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                  <Globe className="w-3 h-3" />
+                  A IA irá buscar candidatos da base nacional da Receita Federal e ranquear os melhores.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
           {/* === STEP 1: Perfil === */}
           {wizardStep === 1 && (
@@ -738,12 +844,16 @@ export default function Matching() {
                 </Button>
                 <Button
                   onClick={() => runMatchMutation.mutate()}
-                  disabled={runMatchMutation.isPending || filteredCompanies.length === 0}
+                  disabled={runMatchMutation.isPending || (searchSource === "carteira" && filteredCompanies.length === 0)}
                   className="h-12 px-8 text-base font-semibold gap-2"
                   size="lg"
                 >
-                  <Zap className="w-5 h-5" />
-                  {runMatchMutation.isPending ? "Analisando..." : `Executar Matching (${filteredCompanies.length})`}
+                  {searchSource === "nacional" ? <Database className="w-5 h-5" /> : <Zap className="w-5 h-5" />}
+                  {runMatchMutation.isPending
+                    ? "Analisando..."
+                    : searchSource === "nacional"
+                    ? "Buscar na Base Nacional"
+                    : `Executar Matching (${filteredCompanies.length})`}
                 </Button>
               </div>
             </div>
