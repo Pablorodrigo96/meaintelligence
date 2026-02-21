@@ -844,27 +844,26 @@ export default function Matching() {
   const geoFilterCount = [criteria.target_state, criteria.geo_reference_city, !criteria.no_geo_limit ? "1" : ""].filter(Boolean).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground">Matching Comprador-Vendedor</h1>
-        <p className="text-muted-foreground mt-1">Motor de matching com IA e análise multidimensional</p>
+        <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground">Matching Comprador-Vendedor</h1>
+        <p className="text-muted-foreground mt-1 text-sm">Motor de matching com IA e análise multidimensional</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="criteria" className="gap-2"><Target className="w-4 h-4" />Critérios</TabsTrigger>
-          <TabsTrigger value="results" className="gap-2">
-            <Search className="w-4 h-4" />Resultados
-            {matches.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{matches.length}</Badge>}
-            {shortlistCount > 0 && <Badge className="ml-1 text-xs bg-success/20 text-success border-success/30">{shortlistCount} ★</Badge>}
+          <TabsTrigger value="criteria" className="gap-1 text-xs md:text-sm"><Target className="w-4 h-4" /><span className="hidden sm:inline">Critérios</span><span className="sm:hidden">Perfil</span></TabsTrigger>
+          <TabsTrigger value="results" className="gap-1 text-xs md:text-sm">
+            <Search className="w-4 h-4" /><span className="hidden sm:inline">Resultados</span><span className="sm:hidden">Match</span>
+            {matches.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{matches.length}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="analytics" className="gap-2"><BarChart3 className="w-4 h-4" />Analytics</TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1 text-xs md:text-sm"><BarChart3 className="w-4 h-4" /><span className="hidden sm:inline">Analytics</span><span className="sm:hidden">Stats</span></TabsTrigger>
         </TabsList>
 
         {/* ========== TAB 1: CRITERIA - WIZARD ========== */}
         <TabsContent value="criteria" className="space-y-6 mt-6">
           {/* Progress indicator */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {[1, 2, 3].map((step) => (
               <button
                 key={step}
@@ -903,10 +902,10 @@ export default function Matching() {
           {/* === SOURCE TOGGLE === */}
           <Card className="border-2 border-primary/20">
             <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted w-fit">
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted w-full sm:w-fit">
                 <button
                   onClick={() => setSearchSource("carteira")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex-1 sm:flex-initial justify-center ${
                     searchSource === "carteira"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -920,7 +919,7 @@ export default function Matching() {
                 </button>
                 <button
                   onClick={() => setSearchSource("nacional")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex-1 sm:flex-initial justify-center ${
                     searchSource === "nacional"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -1035,7 +1034,7 @@ export default function Matching() {
                   <CardDescription>Define como a IA prioriza as dimensões de compatibilidade</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {investorProfiles.map((p) => {
                       const Icon = p.icon;
                       return (
@@ -1060,7 +1059,7 @@ export default function Matching() {
                   <CardDescription>Setor e tamanho desejado (essencial)</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Setor Alvo</Label>
                       <Select value={criteria.target_sector} onValueChange={(v) => setCriteria({ ...criteria, target_sector: v })}>
@@ -1337,7 +1336,7 @@ export default function Matching() {
           ) : (
             <>
               {/* Summary row */}
-              <div className="grid gap-4 md:grid-cols-4">
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
                 <Card>
                   <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle></CardHeader>
                   <CardContent><p className="text-3xl font-bold">{matches.length}</p></CardContent>
@@ -1366,9 +1365,9 @@ export default function Matching() {
               )}
 
               {/* Actions bar */}
-              <div className="flex flex-wrap items-center gap-4">
-                <Button onClick={() => setDeepDiveOpen(true)} variant="outline" className="border-primary/30 hover:bg-primary/5 gap-2">
-                  <Microscope className="w-4 h-4" />Aprofundar Top 10
+              <div className="flex flex-wrap items-center gap-2 md:gap-4">
+                <Button onClick={() => setDeepDiveOpen(true)} variant="outline" className="border-primary/30 hover:bg-primary/5 gap-1 text-xs md:text-sm md:gap-2">
+                  <Microscope className="w-4 h-4" /><span className="hidden sm:inline">Aprofundar Top 10</span><span className="sm:hidden">Top 10</span>
                 </Button>
                 <DeepDiveDialog
                   companies={displayMatches.slice(0, 10).map((m) => ({
@@ -1390,7 +1389,7 @@ export default function Matching() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-center gap-2 flex-1 max-w-xs">
+                <div className="flex items-center gap-2 flex-1 min-w-[140px] max-w-xs">
                   <Label className="text-sm whitespace-nowrap">Min: {minScoreFilter[0]}%</Label>
                   <Slider value={minScoreFilter} onValueChange={setMinScoreFilter} max={100} step={5} className="flex-1" />
                 </div>

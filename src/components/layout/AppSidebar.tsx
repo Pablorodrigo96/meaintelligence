@@ -37,7 +37,11 @@ const adminItems = [
   { label: "Configurações", icon: Settings, path: "/admin/settings" },
 ];
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  onNavigate?: () => void;
+}
+
+export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const location = useLocation();
   const { signOut, roles, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
@@ -70,6 +74,7 @@ export function AppSidebar() {
             <Link
               key={item.path}
               to={item.path}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
                 isActive
@@ -98,6 +103,7 @@ export function AppSidebar() {
                 <Link
                   key={item.path}
                   to={item.path}
+                  onClick={onNavigate}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
                     isActive
@@ -122,7 +128,7 @@ export function AppSidebar() {
           </div>
         )}
         <button
-          onClick={signOut}
+          onClick={() => { signOut(); onNavigate?.(); }}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors w-full"
         >
           <LogOut className="w-5 h-5 shrink-0" />
