@@ -86,8 +86,8 @@ serve(async (req) => {
     } = body;
 
     // Layer 1: DB-level filter - DISTINCT ON ensures 1 company per cnpj_basico
-    // Use 400 to compensate for DISTINCT deduplication (many establishments per company)
-    const effectiveLimit = limit ?? (raw ? 200 : 400);
+    // Use 2000 to get a large initial pool — hundreds of unique companies after dedup
+    const effectiveLimit = limit ?? (raw ? 200 : 2000);
 
     // Capital social caps by sector — prevents giants (Vivo, Itaú, Petrobras) from dominating
     // when the caller doesn't specify max_capital_social or buyer_revenue_brl

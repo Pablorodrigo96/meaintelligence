@@ -127,10 +127,10 @@ interface FunnelStats {
 function FunnelCard({ stats, open, onToggle }: { stats: FunnelStats; open: boolean; onToggle: () => void }) {
   const steps = [
     { label: "Base Nacional", icon: Database, value: stats.db_fetched, color: "text-primary", bg: "bg-primary/10" },
-    { label: "Filtro BD", icon: Filter, value: stats.db_fetched, color: "text-accent", bg: "bg-accent/10" },
-    { label: "Pré-score", icon: Zap, value: stats.pre_filtered, color: "text-warning", bg: "bg-warning/10" },
-    { label: "Analisados", icon: Search, value: stats.ai_analyzed, color: "text-success", bg: "bg-success/10" },
-    { label: "Matches", icon: Star, value: stats.final_matches, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Deduplicados", icon: Filter, value: stats.pre_filtered, color: "text-accent", bg: "bg-accent/10" },
+    { label: "Scored", icon: Zap, value: stats.pre_filtered, color: "text-warning", bg: "bg-warning/10" },
+    { label: "Top Seleção", icon: Star, value: stats.ai_analyzed, color: "text-success", bg: "bg-success/10" },
+    { label: "Salvos", icon: Trophy, value: stats.final_matches, color: "text-primary", bg: "bg-primary/10" },
   ];
 
   return (
@@ -419,16 +419,18 @@ export default function Matching() {
         const { compatibility_score, dimensions } = scoreCompanyLocal(company);
         return { company, compatibility_score, dimensions };
       });
-      const top25 = scored.sort((a, b) => b.compatibility_score - a.compatibility_score).slice(0, 25);
+      scored.sort((a, b) => b.compatibility_score - a.compatibility_score);
+      // Save top 50 — large funnel ensures variety and quality
+      const top = scored.slice(0, 50);
       setFunnelStats(prev => prev
-        ? { ...prev, pre_filtered: top25.length, ai_analyzed: 0, final_matches: 0 }
-        : { db_fetched: companiesToAnalyze.length, pre_filtered: top25.length, ai_analyzed: 0, final_matches: 0 }
+        ? { ...prev, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
+        : { db_fetched: companiesToAnalyze.length, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
       );
 
       // ── PERSIST RESULTS ────────────────────────────────────────────────
       advanceProgress(4);
       let savedCount = 0;
-      for (const { company, compatibility_score, dimensions } of top25) {
+      for (const { company, compatibility_score, dimensions } of top) {
         if (searchSource === "nacional") {
           const { data: savedCompany } = await supabase.from("companies").insert({
             user_id: user!.id,
