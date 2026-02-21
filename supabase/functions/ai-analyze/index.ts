@@ -267,9 +267,9 @@ O usuário irá descrever em linguagem informal o que procura em uma aquisição
 Sua tarefa é extrair parâmetros de busca precisos e retornar APENAS um JSON válido sem markdown.
 
 MAPEAMENTO DE CNAE:
-- Consultoria financeira / gestão financeira / assessoria financeira → cnae_prefixes: ["69", "70"]
-- Bancos / financeiras / crédito → cnae_prefixes: ["64"]
-- Seguros / previdência → cnae_prefixes: ["65"]
+- Consultoria financeira / gestão financeira / assessoria financeira / CFOaaS / BPO financeiro → cnae_prefixes: ["6920", "70"]
+- Advocacia / escritório de advocacia / jurídico → cnae_prefixes: ["6911"]
+- Contabilidade / escritório contábil / auditoria → cnae_prefixes: ["6920"]
 - Fundos / corretoras / mercado financeiro → cnae_prefixes: ["66"]
 - Software / tecnologia / TI / sistemas → cnae_prefixes: ["62", "63"]
 - Comércio / varejo / distribuição → cnae_prefixes: ["45", "46", "47"]
