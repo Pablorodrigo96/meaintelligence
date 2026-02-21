@@ -211,6 +211,27 @@ export default function Matching() {
   // AI enrichment per individual match (on-demand)
   const [aiEnrichingMatch, setAiEnrichingMatch] = useState<string | null>(null);
 
+  // Buyer revenue field (Wizard Step 1)
+  const [buyerRevenueBrl, setBuyerRevenueBrl] = useState<string>("");
+
+  const handleBuyerRevenueChange = (val: string) => {
+    setBuyerRevenueBrl(val);
+    const numVal = Number(val);
+    if (numVal > 0) {
+      setNlExtraParams(prev => ({
+        ...prev,
+        buyer_revenue_brl: numVal,
+        max_capital_social: numVal * 0.5,
+      }));
+    } else {
+      setNlExtraParams(prev => {
+        const next = { ...prev };
+        delete next.buyer_revenue_brl;
+        delete next.max_capital_social;
+        return next;
+      });
+    }
+  };
 
   // Natural language / parse-intent state
   const [nlText, setNlText] = useState("");
@@ -636,6 +657,24 @@ export default function Matching() {
     return `R$${val}`;
   };
 
+  function extractCapitalFromDescription(desc: string | null): number | null {
+    if (!desc) return null;
+    const m = desc.match(/Capital Social:\s*R\$(\d+[\.,]?\d*)(K|M|B)?/i);
+    if (!m) return null;
+    const val = parseFloat(m[1].replace(",", "."));
+    const unit = (m[2] || "").toUpperCase();
+    if (unit === "B") return val * 1e9;
+    if (unit === "M") return val * 1e6;
+    if (unit === "K") return val * 1e3;
+    return val;
+  }
+
+  function extractCnaeFromDescription(desc: string | null): string | null {
+    if (!desc) return null;
+    const m = desc.match(/CNAE:\s*([\d\-\/]+)/);
+    return m ? m[1] : null;
+  }
+
   // ── LOOKUP LOCAL DE INTENÇÃO (zero IA, zero custo) ──────────────────────
   const KEYWORD_MAP: Array<{ keywords: string[]; cnae_prefixes: string[]; sector: string; subtype: string; default_max_capital?: number }> = [
     { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro", "escritório contábil", "contabilidade"], cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
@@ -1035,6 +1074,21 @@ export default function Matching() {
                       </Select>
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1">
+                      <DollarSign className="w-3.5 h-3.5 text-muted-foreground" />
+                      Meu faturamento anual (R$)
+                    </Label>
+                    <Input
+                      type="number"
+                      placeholder="Ex: 5000000"
+                      value={buyerRevenueBrl}
+                      onChange={(e) => handleBuyerRevenueChange(e.target.value)}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Usado para filtrar alvos com capital social até 50% do seu faturamento. Sem isso, o filtro usa caps genéricos por setor.
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -1207,6 +1261,12 @@ export default function Matching() {
                       <p className="text-sm">{criteria.notes}</p>
                     </div>
                   )}
+                  {buyerRevenueBrl && Number(buyerRevenueBrl) > 0 && (
+                    <div className="mt-3 rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Faturamento do Comprador</p>
+                      <p className="font-semibold text-sm">{formatCurrency(Number(buyerRevenueBrl))} <span className="text-xs font-normal text-muted-foreground">→ Capital máx: {formatCurrency(Number(buyerRevenueBrl) * 0.5)}</span></p>
+                    </div>
+                  )}
                   {completenessStats && (
                     <div className="mt-3 flex items-center gap-3 flex-wrap">
                       <Badge variant={completenessStats.avg >= 60 ? "default" : "secondary"} className="text-xs">
@@ -1368,16 +1428,25 @@ export default function Matching() {
                                {isTop3 && <Trophy className="w-4 h-4 text-warning flex-shrink-0" />}
                                <h3 className="font-display font-semibold text-sm truncate">{m.companies?.name || "Desconhecido"}</h3>
                              </div>
-                             <div className="flex items-center gap-2 flex-wrap">
-                               <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
-                               {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
-                               {/* Data source badge */}
-                               {isFromNational && (
-                                 <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
-                                   <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
-                                 </Badge>
-                               )}
-                             </div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
+                                {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
+                                {/* Capital Social badge */}
+                                {(() => {
+                                  const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                                  return capital ? (
+                                    <Badge variant="outline" className="text-[10px] border-accent/40 text-accent">
+                                      <DollarSign className="w-2.5 h-2.5 mr-0.5" />Capital: {formatCurrency(capital)}
+                                    </Badge>
+                                  ) : null;
+                                })()}
+                                {/* Data source badge */}
+                                {isFromNational && (
+                                  <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                    <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
+                                  </Badge>
+                                )}
+                              </div>
                            </div>
                            {/* Score gauge */}
                            <div className={`flex flex-col items-center justify-center rounded-lg border px-3 py-2 ${scoreBg(score)}`}>
@@ -1387,11 +1456,29 @@ export default function Matching() {
                          </div>
 
                          {/* Mini stats row */}
-                         <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3">
-                           <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
-                           <span>·</span>
-                           <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
-                           <span>·</span>
+                         <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
+                           {(() => {
+                             const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                             const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
+                             if (capital || cnae) {
+                               return (
+                                 <>
+                                   {capital && <span>Capital Social: {formatCurrency(capital)}</span>}
+                                   {capital && cnae && <span>·</span>}
+                                   {cnae && <span className="font-mono">CNAE: {cnae}</span>}
+                                   <span>·</span>
+                                 </>
+                               );
+                             }
+                             return (
+                               <>
+                                 <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
+                                 <span>·</span>
+                                 <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
+                                 <span>·</span>
+                               </>
+                             );
+                           })()}
                            <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
                              {completeness}% dados
                            </Badge>
