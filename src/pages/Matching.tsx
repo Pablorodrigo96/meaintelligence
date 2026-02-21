@@ -420,8 +420,9 @@ export default function Matching() {
         return { company, compatibility_score, dimensions };
       });
       scored.sort((a, b) => b.compatibility_score - a.compatibility_score);
-      // Save top 50 — large funnel ensures variety and quality
-      const top = scored.slice(0, 50);
+      // Filter by minimum score threshold, then take top 20
+      const qualified = scored.filter(s => s.compatibility_score >= 35);
+      const top = qualified.slice(0, 20);
       setFunnelStats(prev => prev
         ? { ...prev, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
         : { db_fetched: companiesToAnalyze.length, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
@@ -679,9 +680,12 @@ export default function Matching() {
 
   // ── LOOKUP LOCAL DE INTENÇÃO (zero IA, zero custo) ──────────────────────
   const KEYWORD_MAP: Array<{ keywords: string[]; cnae_prefixes: string[]; sector: string; subtype: string; default_max_capital?: number }> = [
-    { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro", "escritório contábil", "contabilidade"], cnae_prefixes: ["69", "70"], sector: "Finance", subtype: "Consulting" },
-    { keywords: ["banco", "financeira", "crédito", "empréstimo", "fintec"], cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking", default_max_capital: 100_000_000 },
+    { keywords: ["consultoria financeira", "gestão financeira", "assessoria financeira", "bpo financeiro", "cfoaas", "cfo as a service", "cfo ", "outsourcing financeiro", "terceirização financeira", "backoffice financeiro"], cnae_prefixes: ["6920", "70"], sector: "Finance", subtype: "Consulting" },
+    { keywords: ["escritório contábil", "contabilidade", "contador", "auditoria"], cnae_prefixes: ["6920"], sector: "Finance", subtype: "Accounting" },
+    { keywords: ["advocacia", "advogado", "escritório de advocacia", "jurídico", "direito"], cnae_prefixes: ["6911"], sector: "Other", subtype: "Legal" },
+    { keywords: ["banco", "financeira", "crédito", "empréstimo", "fintec", "fintech"], cnae_prefixes: ["64"], sector: "Finance", subtype: "Banking", default_max_capital: 100_000_000 },
     { keywords: ["seguro", "previdência", "seguradora"], cnae_prefixes: ["65"], sector: "Finance", subtype: "Insurance" },
+    { keywords: ["corretora", "fundo", "gestora de investimentos", "asset", "mercado financeiro", "investimento"], cnae_prefixes: ["66"], sector: "Finance", subtype: "Investment" },
     { keywords: ["software", "tecnologia", "ti ", " ti,", "sistemas", "saas", "startup de tech", "desenvolvimento", "app", "aplicativo"], cnae_prefixes: ["62", "63"], sector: "Technology", subtype: "Software" },
     { keywords: ["saúde", "clínica", "hospital", "farmácia", "laboratório", "medicina", "odontologia", "dentista"], cnae_prefixes: ["86", "87", "88"], sector: "Healthcare", subtype: "Health" },
     { keywords: ["educação", "escola", "ensino", "cursos", "treinamento", "faculdade", "universidade"], cnae_prefixes: ["85"], sector: "Education", subtype: "Education" },
