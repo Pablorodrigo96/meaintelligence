@@ -15,7 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
@@ -70,6 +71,12 @@ interface MatchDimensions {
   size_fit: number;
   location_fit: number;
   risk_fit: number;
+  revenue_synergy: number;
+  cost_synergy: number;
+  vertical_synergy: number;
+  consolidation_synergy: number;
+  strategic_synergy: number;
+  synergy_type: string;
 }
 
 interface DimensionExplanations {
@@ -193,6 +200,8 @@ export default function Matching() {
   const [minScoreFilter, setMinScoreFilter] = useState([0]);
   const [deepDiveOpen, setDeepDiveOpen] = useState(false);
   const [investorProfile, setInvestorProfile] = useState("Moderado");
+  const [buyerCnae, setBuyerCnae] = useState("");
+  const [buyerBottlenecks, setBuyerBottlenecks] = useState<string[]>([]);
   const [wizardStep, setWizardStep] = useState(1);
   const [progressStep, setProgressStep] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -715,6 +724,48 @@ export default function Matching() {
     "Other": [],
   };
 
+  // Matriz CNAE de Cadeia de Valor
+  const CNAE_VALUE_CHAIN: Record<string, { upstream: string[]; downstream: string[]; cross_sell: string[] }> = {
+    "61": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },       // Telecom/ISP
+    "6110": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
+    "6120": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
+    "6130": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
+    "6190": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
+    "6920": { upstream: ["69"], downstream: ["64", "66"], cross_sell: ["62", "73"] },           // Consultoria financeira
+    "70": { upstream: ["69"], downstream: ["64", "66"], cross_sell: ["62", "73"] },             // Gestão
+    "62": { upstream: ["85"], downstream: ["63", "61"], cross_sell: ["73", "70"] },             // Software
+    "63": { upstream: ["62"], downstream: ["73", "70"], cross_sell: ["61", "64"] },             // Dados
+    "64": { upstream: ["62", "66"], downstream: ["65"], cross_sell: ["69", "70"] },             // Banking
+    "65": { upstream: ["64", "66"], downstream: [], cross_sell: ["69", "70"] },                 // Seguros
+    "66": { upstream: ["62"], downstream: ["64", "65"], cross_sell: ["69", "70"] },             // Investimentos
+    "86": { upstream: ["21", "32"], downstream: ["87", "88"], cross_sell: ["85", "62"] },       // Saúde
+    "85": { upstream: ["58"], downstream: ["62", "63"], cross_sell: ["73", "86"] },             // Educação
+    "41": { upstream: ["23", "24", "25"], downstream: ["68"], cross_sell: ["43", "71"] },       // Construção
+    "43": { upstream: ["23", "25"], downstream: ["41", "61"], cross_sell: ["71", "42"] },       // Instalação
+    "35": { upstream: ["26", "28"], downstream: ["43"], cross_sell: ["42", "71"] },             // Energia
+    "45": { upstream: ["29", "30"], downstream: [], cross_sell: ["49", "64"] },                 // Comércio veículos
+    "46": { upstream: ["10", "20", "22"], downstream: ["47"], cross_sell: ["49", "52"] },       // Atacado
+    "47": { upstream: ["46"], downstream: [], cross_sell: ["49", "73"] },                       // Varejo
+    "49": { upstream: ["29", "30"], downstream: ["52"], cross_sell: ["64", "73"] },             // Transporte
+    "01": { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },       // Agricultura
+  };
+
+  const SYNERGY_PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
+    "Agressivo":    { revenue: 0.30, cost: 0.15, vertical: 0.25, consolidation: 0.20, strategic: 0.10 },
+    "Moderado":     { revenue: 0.25, cost: 0.20, vertical: 0.20, consolidation: 0.20, strategic: 0.15 },
+    "Conservador":  { revenue: 0.15, cost: 0.30, vertical: 0.15, consolidation: 0.15, strategic: 0.25 },
+  };
+
+  // Ajuste de pesos baseado nos gargalos do comprador
+  const BOTTLENECK_ADJUSTMENTS: Record<string, Record<string, number>> = {
+    "revenue":  { revenue: 0.15, cost: -0.05, vertical: -0.03, consolidation: -0.03, strategic: -0.04 },
+    "cost":     { revenue: -0.05, cost: 0.15, vertical: -0.03, consolidation: -0.03, strategic: -0.04 },
+    "supplier": { revenue: -0.03, cost: -0.03, vertical: 0.15, consolidation: -0.04, strategic: -0.05 },
+    "geo":      { revenue: -0.04, cost: -0.04, vertical: -0.04, consolidation: -0.03, strategic: 0.15 },
+    "value":    { revenue: -0.03, cost: -0.03, vertical: -0.02, consolidation: 0.10, strategic: 0.08 },
+  };
+
+  // Legacy weights kept for backward compatibility
   const PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
     "Agressivo": { sector: 0.30, size: 0.25, financial: 0.20, location: 0.15, risk: 0.10 },
     "Moderado":  { sector: 0.20, size: 0.20, financial: 0.25, location: 0.20, risk: 0.15 },
@@ -754,49 +805,132 @@ export default function Matching() {
     const targetSize = criteria.target_size || nlResult?.target_size || null;
     const targetState = criteria.target_state || null;
     const cnaePrefixes: string[] = (nlExtraParams.cnae_prefixes || nlResult?.cnae_prefixes || []) as string[];
+    const companyCnae = String(company.cnae_fiscal_principal || company.description?.match(/CNAE: (\d+)/)?.[1] || "");
+    const buyerCnaePrefix = buyerCnae || (cnaePrefixes.length > 0 ? cnaePrefixes[0] : "");
 
-    // sector_fit
+    // ── Legacy dimensions (mantidos para compatibilidade) ──
     const sectorExact = targetSector && company.sector === targetSector;
     const sectorAdjacent = targetSector && SECTOR_ADJACENCY[targetSector]?.includes(company.sector);
-    const companyCnae = company.cnae_fiscal_principal || company.description?.match(/CNAE: (\d+)/)?.[1] || "";
-    const cnaeBonus = cnaePrefixes.length > 0 && cnaePrefixes.some((p: string) => String(companyCnae).startsWith(p));
+    const cnaeBonus = cnaePrefixes.length > 0 && cnaePrefixes.some((p: string) => companyCnae.startsWith(p));
     const sector_fit = sectorExact ? 90 : cnaeBonus ? 75 : sectorAdjacent ? 65 : targetSector ? 30 : 60;
 
-    // size_fit
     const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
-    const diff = targetSize ? Math.abs(sizeOrder.indexOf(company.size || "") - sizeOrder.indexOf(targetSize)) : 0;
-    const size_fit = !targetSize ? 60 : diff === 0 ? 95 : diff === 1 ? 75 : diff === 2 ? 50 : 25;
-
-    // location_fit
+    const sizeDiff = targetSize ? Math.abs(sizeOrder.indexOf(company.size || "") - sizeOrder.indexOf(targetSize)) : 0;
+    const size_fit = !targetSize ? 60 : sizeDiff === 0 ? 95 : sizeDiff === 1 ? 75 : sizeDiff === 2 ? 50 : 25;
     const location_fit = !targetState ? 60 : company.state === targetState ? 90 : 45;
-
-    // financial_fit (sem dados reais = neutro)
     const financial_fit = company.revenue && company.ebitda ? 70 : company.revenue ? 60 : 50;
-
-    // risk_fit (neutro sem dados reais)
     const risk_fit = 55;
 
-    // Pesos ajustados para dados ausentes
-    const hasRealFinancials = !!(company.revenue && company.ebitda);
-    const weights = { ...(PROFILE_WEIGHTS[investorProfile] || PROFILE_WEIGHTS["Moderado"]) };
-    if (!hasRealFinancials) {
-      const reduction = weights.financial * 0.4;
-      weights.financial -= reduction;
-      weights.sector += reduction / 2;
-      weights.size += reduction / 2;
-    }
+    // ── SYNERGY SCORE: 5 pilares ──────────────────────────────────────────
+    // Helpers
+    const sameState = targetState ? company.state === targetState : false;
+    const sameCity = criteria.geo_reference_city ? company.city === criteria.geo_reference_city : false;
+    const sameCnae4 = buyerCnaePrefix && companyCnae.startsWith(buyerCnaePrefix.substring(0, 4));
+    const sameCnae2 = buyerCnaePrefix && companyCnae.startsWith(buyerCnaePrefix.substring(0, 2));
+    const buyerSizeIdx = sizeOrder.indexOf(targetSize || "Medium");
+    const targetSizeIdx = sizeOrder.indexOf(company.size || "Small");
 
-    const compatibility_score = Math.round(
-      sector_fit * weights.sector +
-      size_fit * weights.size +
-      financial_fit * weights.financial +
-      location_fit * weights.location +
-      risk_fit * weights.risk
+    // Lookup na cadeia de valor
+    const findChain = (prefix: string) => {
+      if (CNAE_VALUE_CHAIN[prefix]) return CNAE_VALUE_CHAIN[prefix];
+      const short = prefix.substring(0, 2);
+      return CNAE_VALUE_CHAIN[short] || null;
+    };
+    const buyerChain = buyerCnaePrefix ? findChain(buyerCnaePrefix) : null;
+    const companyCnae2 = companyCnae.substring(0, 2);
+
+    const isUpstream = buyerChain?.upstream?.some(u => companyCnae.startsWith(u)) || false;
+    const isDownstream = buyerChain?.downstream?.some(d => companyCnae.startsWith(d)) || false;
+    const isCrossSell = buyerChain?.cross_sell?.some(cs => companyCnae.startsWith(cs)) || false;
+
+    // Capital social do target
+    const targetCapital = extractCapitalFromDescription(company.description);
+    const buyerRevNum = Number(buyerRevenueBrl) || 0;
+    const capitalRatio = (targetCapital && buyerRevNum > 0) ? buyerRevNum / targetCapital : null;
+
+    // 1. Revenue Synergy (0-100)
+    let revenue_synergy = 0;
+    if (isCrossSell) revenue_synergy += 40;
+    if (sameState) revenue_synergy += 20;
+    if (sizeDiff <= 1) revenue_synergy += 20;
+    if (isDownstream) revenue_synergy += 20;
+
+    // 2. Cost Synergy (0-100)
+    let cost_synergy = 0;
+    if (sameCnae2) cost_synergy += 40;
+    if (sameCity) cost_synergy += 30;
+    else if (sameState) cost_synergy += 15;
+    if (sizeDiff === 0) cost_synergy += 20;
+    if (capitalRatio && capitalRatio < 3) cost_synergy += 10;
+
+    // 3. Vertical Integration (0-100)
+    let vertical_synergy = 0;
+    if (isUpstream) vertical_synergy += 50;
+    if (isDownstream) vertical_synergy += 40;
+    if (sameState) vertical_synergy += 10;
+
+    // 4. Consolidation (0-100)
+    let consolidation_synergy = 0;
+    if (sameCnae4) consolidation_synergy += 40;
+    if (targetSizeIdx < buyerSizeIdx) consolidation_synergy += 25;
+    if (targetCapital && targetCapital < 500_000) consolidation_synergy += 20;
+    if (sameState) consolidation_synergy += 15;
+
+    // 5. Strategic (0-100)
+    let strategic_synergy = 0;
+    if (targetState && company.state && company.state !== targetState) strategic_synergy += 30;
+    if (sectorAdjacent) strategic_synergy += 25;
+    if (targetCapital && targetCapital > 100_000 && targetCapital < 5_000_000) strategic_synergy += 25;
+    if (!sameCnae2 && !sectorExact) strategic_synergy += 20;
+
+    // Cap all at 100
+    revenue_synergy = Math.min(100, revenue_synergy);
+    cost_synergy = Math.min(100, cost_synergy);
+    vertical_synergy = Math.min(100, vertical_synergy);
+    consolidation_synergy = Math.min(100, consolidation_synergy);
+    strategic_synergy = Math.min(100, strategic_synergy);
+
+    // Pesos baseados em perfil + gargalos
+    const baseWeights = { ...(SYNERGY_PROFILE_WEIGHTS[investorProfile] || SYNERGY_PROFILE_WEIGHTS["Moderado"]) };
+    for (const bn of buyerBottlenecks) {
+      const adj = BOTTLENECK_ADJUSTMENTS[bn];
+      if (adj) {
+        for (const key of Object.keys(baseWeights)) {
+          baseWeights[key] = Math.max(0.05, (baseWeights[key] || 0) + (adj[key] || 0));
+        }
+      }
+    }
+    // Normalize weights to sum to 1
+    const wSum = Object.values(baseWeights).reduce((a, b) => a + b, 0);
+    for (const key of Object.keys(baseWeights)) baseWeights[key] /= wSum;
+
+    const synergy_score = Math.round(
+      revenue_synergy * baseWeights.revenue +
+      cost_synergy * baseWeights.cost +
+      vertical_synergy * baseWeights.vertical +
+      consolidation_synergy * baseWeights.consolidation +
+      strategic_synergy * baseWeights.strategic
     );
 
+    // Label = pilar dominante
+    const pillars = [
+      { key: "Sinergia de Receita", val: revenue_synergy },
+      { key: "Redução de Custo", val: cost_synergy },
+      { key: "Verticalização", val: vertical_synergy },
+      { key: "Consolidação", val: consolidation_synergy },
+      { key: "Estratégica", val: strategic_synergy },
+    ];
+    const synergy_type = pillars.reduce((a, b) => b.val > a.val ? b : a).key;
+
+    const compatibility_score = Math.min(100, Math.max(0, synergy_score));
+
     return {
-      compatibility_score: Math.min(100, Math.max(0, compatibility_score)),
-      dimensions: { sector_fit, size_fit, location_fit, financial_fit, risk_fit },
+      compatibility_score,
+      dimensions: {
+        sector_fit, size_fit, location_fit, financial_fit, risk_fit,
+        revenue_synergy, cost_synergy, vertical_synergy, consolidation_synergy, strategic_synergy,
+        synergy_type,
+      },
     };
   }
   // ── FIM DO SCORING DETERMINÍSTICO ────────────────────────────────────────
@@ -836,7 +970,52 @@ export default function Matching() {
     size_fit: "Tamanho",
     location_fit: "Localização",
     risk_fit: "Risco",
+    revenue_synergy: "Receita",
+    cost_synergy: "Custo",
+    vertical_synergy: "Verticalização",
+    consolidation_synergy: "Consolidação",
+    strategic_synergy: "Estratégica",
   };
+
+  const CNAE_OPTIONS = [
+    { value: "61", label: "61 — Telecom / ISP" },
+    { value: "6920", label: "6920 — Consultoria Financeira" },
+    { value: "70", label: "70 — Gestão Empresarial" },
+    { value: "62", label: "62 — Software / TI" },
+    { value: "63", label: "63 — Dados / Internet" },
+    { value: "64", label: "64 — Banking / Fintech" },
+    { value: "66", label: "66 — Investimentos" },
+    { value: "86", label: "86 — Saúde" },
+    { value: "85", label: "85 — Educação" },
+    { value: "41", label: "41 — Construção" },
+    { value: "43", label: "43 — Instalações" },
+    { value: "35", label: "35 — Energia" },
+    { value: "47", label: "47 — Varejo" },
+    { value: "46", label: "46 — Atacado" },
+    { value: "49", label: "49 — Transporte / Logística" },
+    { value: "01", label: "01 — Agricultura / Agro" },
+    { value: "10", label: "10 — Indústria Alimentícia" },
+    { value: "25", label: "25 — Manufatura / Metalurgia" },
+    { value: "73", label: "73 — Marketing / Publicidade" },
+    { value: "69", label: "69 — Contabilidade / Jurídico" },
+  ];
+
+  const BOTTLENECK_OPTIONS = [
+    { value: "revenue", label: "Preciso de mais clientes / receita", icon: TrendingUp },
+    { value: "cost", label: "Preciso reduzir custos operacionais", icon: DollarSign },
+    { value: "supplier", label: "Dependo de fornecedores críticos", icon: Link2 },
+    { value: "geo", label: "Quero crescer em novas regiões", icon: Globe },
+    { value: "value", label: "Quero aumentar o valor da minha empresa", icon: Trophy },
+  ];
+
+  const toggleBottleneck = (val: string) => {
+    setBuyerBottlenecks(prev =>
+      prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]
+    );
+  };
+
+  const synergyBarColor = (val: number) =>
+    val >= 70 ? "bg-success" : val >= 40 ? "bg-warning" : "bg-muted-foreground/30";
 
   const scoreColor = (score: number) =>
     score >= 70 ? "text-success" : score >= 40 ? "text-warning" : "text-destructive";
@@ -1035,7 +1214,7 @@ export default function Matching() {
               <Card className="border-primary/20 bg-primary/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="font-display flex items-center gap-2 text-base"><UserCheck className="w-5 h-5 text-primary" />Perfil do Investidor</CardTitle>
-                  <CardDescription>Define como a IA prioriza as dimensões de compatibilidade</CardDescription>
+                  <CardDescription>Define como o motor prioriza os pilares de sinergia</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1053,6 +1232,49 @@ export default function Matching() {
                         </button>
                       );
                     })}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Buyer CNAE + Bottleneck */}
+              <Card className="border-accent/20 bg-accent/5">
+                <CardHeader className="pb-3">
+                  <CardTitle className="font-display flex items-center gap-2 text-base"><Link2 className="w-5 h-5 text-accent" />Meu CNAE & Gargalos</CardTitle>
+                  <CardDescription>Permite calcular sinergias de cadeia de valor e ajustar pesos automaticamente</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Meu CNAE principal</Label>
+                    <Select value={buyerCnae} onValueChange={setBuyerCnae}>
+                      <SelectTrigger><SelectValue placeholder="Selecione seu CNAE" /></SelectTrigger>
+                      <SelectContent>
+                        {CNAE_OPTIONS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">Usado para identificar sinergias de verticalização (upstream/downstream) e cross-sell.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Qual é seu principal gargalo hoje?</Label>
+                    <div className="space-y-2">
+                      {BOTTLENECK_OPTIONS.map((opt) => {
+                        const Icon = opt.icon;
+                        const checked = buyerBottlenecks.includes(opt.value);
+                        return (
+                          <label
+                            key={opt.value}
+                            className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-all ${checked ? "border-accent bg-accent/10" : "border-border hover:border-accent/40"}`}
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={() => toggleBottleneck(opt.value)}
+                            />
+                            <Icon className={`w-4 h-4 ${checked ? "text-accent" : "text-muted-foreground"}`} />
+                            <span className="text-sm">{opt.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Os gargalos selecionados ajustam automaticamente os pesos dos 5 pilares de sinergia.</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1252,14 +1474,48 @@ export default function Matching() {
                       <p className="font-semibold text-sm">{criteria.target_state || "Todos"}</p>
                     </div>
                     <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Risco</p>
-                      <p className="font-semibold text-sm">{riskLevels.find((r) => r.value === criteria.risk_level)?.label || "Qualquer"}</p>
+                      <p className="text-xs text-muted-foreground">CNAE Buyer</p>
+                      <p className="font-semibold text-sm">{buyerCnae ? CNAE_OPTIONS.find(c => c.value === buyerCnae)?.label || buyerCnae : "Não informado"}</p>
                     </div>
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Empresas</p>
                       <p className="font-semibold text-sm">{filteredCompanies.length} de {companies.length}</p>
                     </div>
                   </div>
+                  {buyerBottlenecks.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <span className="text-xs text-muted-foreground self-center">Gargalos:</span>
+                      {buyerBottlenecks.map(bn => (
+                        <Badge key={bn} variant="outline" className="text-xs border-accent/40 text-accent">
+                          {BOTTLENECK_OPTIONS.find(o => o.value === bn)?.label || bn}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {/* Synergy weights preview */}
+                  {(() => {
+                    const baseW = { ...(SYNERGY_PROFILE_WEIGHTS[investorProfile] || SYNERGY_PROFILE_WEIGHTS["Moderado"]) };
+                    for (const bn of buyerBottlenecks) {
+                      const adj = BOTTLENECK_ADJUSTMENTS[bn];
+                      if (adj) { for (const k of Object.keys(baseW)) baseW[k] = Math.max(0.05, (baseW[k] || 0) + (adj[k] || 0)); }
+                    }
+                    const wS = Object.values(baseW).reduce((a, b) => a + b, 0);
+                    for (const k of Object.keys(baseW)) baseW[k] /= wS;
+                    const labels: Record<string, string> = { revenue: "Receita", cost: "Custo", vertical: "Vertical", consolidation: "Consolidação", strategic: "Estratégica" };
+                    return (
+                      <div className="mt-3 rounded-lg border p-3 bg-muted/30">
+                        <p className="text-xs text-muted-foreground mb-2 font-medium">Pesos de Sinergia Configurados</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(baseW).map(([key, weight]) => (
+                            <div key={key} className="flex items-center gap-1">
+                              <span className="text-xs font-medium">{labels[key] || key}</span>
+                              <Badge variant="secondary" className="text-[10px]">{Math.round((weight as number) * 100)}%</Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {criteria.notes && (
                     <div className="mt-3 rounded-lg border p-3 bg-muted/50">
                       <p className="text-xs text-muted-foreground mb-1">Notas Estratégicas</p>
@@ -1434,24 +1690,29 @@ export default function Matching() {
                                <h3 className="font-display font-semibold text-sm truncate">{m.companies?.name || "Desconhecido"}</h3>
                              </div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
+                              <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
                                 {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
-                                {/* Capital Social badge */}
-                                {(() => {
-                                  const capital = extractCapitalFromDescription(m.companies?.description ?? null);
-                                  return capital ? (
-                                    <Badge variant="outline" className="text-[10px] border-accent/40 text-accent">
-                                      <DollarSign className="w-2.5 h-2.5 mr-0.5" />Capital: {formatCurrency(capital)}
-                                    </Badge>
-                                  ) : null;
-                                })()}
-                                {/* Data source badge */}
-                                {isFromNational && (
-                                  <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
-                                    <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
-                                  </Badge>
-                                )}
-                              </div>
+                                 {/* Synergy type badge */}
+                                 {dimensions?.synergy_type && (
+                                   <Badge className="text-[10px] bg-accent/15 text-accent border-accent/30 border">
+                                     {dimensions.synergy_type}
+                                   </Badge>
+                                 )}
+                                 {/* Capital Social badge */}
+                                 {(() => {
+                                   const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                                   return capital ? (
+                                     <Badge variant="outline" className="text-[10px] border-accent/40 text-accent">
+                                       <DollarSign className="w-2.5 h-2.5 mr-0.5" />Capital: {formatCurrency(capital)}
+                                     </Badge>
+                                   ) : null;
+                                 })()}
+                                 {isFromNational && (
+                                   <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                     <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
+                                   </Badge>
+                                 )}
+                               </div>
                            </div>
                            {/* Score gauge */}
                            <div className={`flex flex-col items-center justify-center rounded-lg border px-3 py-2 ${scoreBg(score)}`}>
@@ -1489,25 +1750,26 @@ export default function Matching() {
                            </Badge>
                          </div>
 
-                         {/* Mini radar chart */}
+                         {/* Synergy mini-bars */}
                          {dimensions && !isExpanded && (
-                           <div className="flex justify-center">
-                             <ResponsiveContainer width={130} height={100}>
-                               <RadarChart data={[
-                                 { dim: "Fin", value: dimensions.financial_fit },
-                                 { dim: "Set", value: dimensions.sector_fit },
-                                 { dim: "Tam", value: dimensions.size_fit },
-                                 { dim: "Loc", value: dimensions.location_fit },
-                                 { dim: "Ris", value: dimensions.risk_fit },
-                               ]}>
-                                 <PolarGrid stroke="hsl(var(--border))" />
-                                 <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
-                                 <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                                 <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={1.5} />
-                               </RadarChart>
-                             </ResponsiveContainer>
-                           </div>
-                         )}
+                            <div className="space-y-1.5 mt-1">
+                              {[
+                                { label: "Receita", val: dimensions.revenue_synergy },
+                                { label: "Custo", val: dimensions.cost_synergy },
+                                { label: "Vertical", val: dimensions.vertical_synergy },
+                                { label: "Consolid.", val: dimensions.consolidation_synergy },
+                                { label: "Estratég.", val: dimensions.strategic_synergy },
+                              ].map(({ label, val }) => (
+                                <div key={label} className="flex items-center gap-2">
+                                  <span className="text-[10px] text-muted-foreground w-14 text-right truncate">{label}</span>
+                                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all ${synergyBarColor(val)}`} style={{ width: `${val}%` }} />
+                                  </div>
+                                  <span className="text-[10px] font-mono font-medium w-6 text-right">{val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
                          {/* Actions — feedback buttons */}
                          <div className="flex items-center justify-between mt-2">
@@ -1642,24 +1904,49 @@ export default function Matching() {
                                 )}
                               </div>
                               {dimensions && (
-                                <div>
-                                  <h4 className="font-display font-semibold text-sm mb-2 text-center">Dimensões de Compatibilidade</h4>
-                                  <ResponsiveContainer width="100%" height={280}>
-                                    <RadarChart data={[
-                                      { dim: "Financeiro", value: dimensions.financial_fit },
-                                      { dim: "Setor", value: dimensions.sector_fit },
-                                      { dim: "Tamanho", value: dimensions.size_fit },
-                                      { dim: "Localização", value: dimensions.location_fit },
-                                      { dim: "Risco", value: dimensions.risk_fit },
-                                    ]}>
-                                      <PolarGrid stroke="hsl(var(--border))" />
-                                      <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }} />
-                                      <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
-                                      <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
-                                    </RadarChart>
-                                  </ResponsiveContainer>
-                                </div>
-                              )}
+                                 <div>
+                                   <h4 className="font-display font-semibold text-sm mb-3 text-center">Sinergias Identificadas</h4>
+                                   <div className="space-y-2.5">
+                                     {[
+                                       { label: "Sinergia de Receita", val: dimensions.revenue_synergy },
+                                       { label: "Redução de Custo", val: dimensions.cost_synergy },
+                                       { label: "Verticalização", val: dimensions.vertical_synergy },
+                                       { label: "Consolidação", val: dimensions.consolidation_synergy },
+                                       { label: "Estratégica", val: dimensions.strategic_synergy },
+                                     ].map(({ label, val }) => {
+                                       const isPrimary = dimensions.synergy_type === label;
+                                       return (
+                                         <div key={label} className="flex items-center gap-3">
+                                           <span className={`text-xs w-32 text-right truncate ${isPrimary ? "font-semibold text-accent" : "text-muted-foreground"}`}>
+                                             {label} {isPrimary && "←"}
+                                           </span>
+                                           <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
+                                             <div className={`h-full rounded-full transition-all ${isPrimary ? "bg-accent" : synergyBarColor(val)}`} style={{ width: `${val}%` }} />
+                                           </div>
+                                           <span className={`text-xs font-mono font-medium w-8 text-right ${isPrimary ? "text-accent font-bold" : ""}`}>{val}</span>
+                                         </div>
+                                       );
+                                     })}
+                                   </div>
+                                   <div className="mt-4">
+                                     <h4 className="font-display font-semibold text-sm mb-2 text-center">Radar de Compatibilidade</h4>
+                                     <ResponsiveContainer width="100%" height={220}>
+                                       <RadarChart data={[
+                                         { dim: "Receita", value: dimensions.revenue_synergy },
+                                         { dim: "Custo", value: dimensions.cost_synergy },
+                                         { dim: "Vertical", value: dimensions.vertical_synergy },
+                                         { dim: "Consolid.", value: dimensions.consolidation_synergy },
+                                         { dim: "Estratég.", value: dimensions.strategic_synergy },
+                                       ]}>
+                                         <PolarGrid stroke="hsl(var(--border))" />
+                                         <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                                         <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
+                                         <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
+                                       </RadarChart>
+                                     </ResponsiveContainer>
+                                   </div>
+                                 </div>
+                               )}
                             </div>
                           </div>
                         )}
