@@ -80,6 +80,8 @@ interface MatchDimensions {
   gain_insights: string[];
   bottleneck_resolution: string | null;
   consolidator_score: number;
+  tier_priority: number;
+  tier_label: string;
 }
 
 interface DimensionExplanations {
@@ -431,7 +433,14 @@ export default function Matching() {
         const { compatibility_score, dimensions } = scoreCompanyLocal(company);
         return { company, compatibility_score, dimensions };
       });
-      scored.sort((a, b) => b.compatibility_score - a.compatibility_score);
+      scored.sort((a, b) => {
+        const scoreDiff = b.compatibility_score - a.compatibility_score;
+        // Tier as tiebreaker when scores are within 5 points
+        if (Math.abs(scoreDiff) < 5) {
+          return (a.dimensions.tier_priority || 6) - (b.dimensions.tier_priority || 6);
+        }
+        return scoreDiff;
+      });
       // Filter by minimum score threshold, then take top 20
       const qualified = scored.filter(s => s.compatibility_score >= 35);
       const top = qualified.slice(0, 20);
@@ -727,30 +736,68 @@ export default function Matching() {
     "Other": [],
   };
 
-  // Matriz CNAE de Cadeia de Valor
+  // Matriz CNAE de Cadeia de Valor — Modelo Universal por Setor
   const CNAE_VALUE_CHAIN: Record<string, { upstream: string[]; downstream: string[]; cross_sell: string[] }> = {
-    "61": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },       // Telecom/ISP
-    "6110": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
-    "6120": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
-    "6130": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
-    "6190": { upstream: ["43", "26"], downstream: ["62", "63"], cross_sell: ["80", "35"] },
-    "6920": { upstream: ["69"], downstream: ["64", "66"], cross_sell: ["62", "73"] },           // Consultoria financeira
-    "70": { upstream: ["69"], downstream: ["64", "66"], cross_sell: ["62", "73"] },             // Gestão
-    "62": { upstream: ["85"], downstream: ["63", "61"], cross_sell: ["73", "70"] },             // Software
-    "63": { upstream: ["62"], downstream: ["73", "70"], cross_sell: ["61", "64"] },             // Dados
-    "64": { upstream: ["62", "66"], downstream: ["65"], cross_sell: ["69", "70"] },             // Banking
-    "65": { upstream: ["64", "66"], downstream: [], cross_sell: ["69", "70"] },                 // Seguros
-    "66": { upstream: ["62"], downstream: ["64", "65"], cross_sell: ["69", "70"] },             // Investimentos
-    "86": { upstream: ["21", "32"], downstream: ["87", "88"], cross_sell: ["85", "62"] },       // Saúde
-    "85": { upstream: ["58"], downstream: ["62", "63"], cross_sell: ["73", "86"] },             // Educação
-    "41": { upstream: ["23", "24", "25"], downstream: ["68"], cross_sell: ["43", "71"] },       // Construção
-    "43": { upstream: ["23", "25"], downstream: ["41", "61"], cross_sell: ["71", "42"] },       // Instalação
-    "35": { upstream: ["26", "28"], downstream: ["43"], cross_sell: ["42", "71"] },             // Energia
-    "45": { upstream: ["29", "30"], downstream: [], cross_sell: ["49", "64"] },                 // Comércio veículos
-    "46": { upstream: ["10", "20", "22"], downstream: ["47"], cross_sell: ["49", "52"] },       // Atacado
-    "47": { upstream: ["46"], downstream: [], cross_sell: ["49", "73"] },                       // Varejo
-    "49": { upstream: ["29", "30"], downstream: ["52"], cross_sell: ["64", "73"] },             // Transporte
-    "01": { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },       // Agricultura
+    // ── Telecom / ISP ──
+    "61":   { upstream: ["4221", "4321", "9512", "26"], downstream: ["6201", "6311", "6190"], cross_sell: ["80", "35"] },
+    "6110": { upstream: ["4221", "4321", "9512", "26"], downstream: ["6201", "6311", "6190"], cross_sell: ["80", "35"] },
+    "6120": { upstream: ["4221", "4321", "9512", "26"], downstream: ["6201", "6311", "6190"], cross_sell: ["80", "35"] },
+    "6130": { upstream: ["4221", "4321", "9512", "26"], downstream: ["6201", "6311", "6190"], cross_sell: ["80", "35"] },
+    "6190": { upstream: ["4221", "4321", "9512", "26"], downstream: ["6201", "6311", "6190"], cross_sell: ["80", "35"] },
+    "4221": { upstream: ["26", "28"], downstream: ["61"], cross_sell: ["4321", "43"] },           // Infraestrutura telecom
+    "9512": { upstream: ["26"], downstream: ["61", "6190"], cross_sell: ["4321", "43"] },         // Manutenção equip. telecom
+    // ── Consultoria / BPO ──
+    "69":   { upstream: ["6911", "6204"], downstream: ["64", "66", "6499"], cross_sell: ["62", "73", "85"] },
+    "6920": { upstream: ["6911", "6204"], downstream: ["64", "66", "6499"], cross_sell: ["62", "73", "85"] },
+    "6911": { upstream: ["85"], downstream: ["69", "70"], cross_sell: ["64", "66"] },             // Advocacia societária
+    "70":   { upstream: ["69", "6911"], downstream: ["64", "66", "6499"], cross_sell: ["62", "73", "85"] },
+    "7020": { upstream: ["69", "6911"], downstream: ["64", "66", "6499"], cross_sell: ["62", "73", "85"] },
+    // ── Software / TI ──
+    "62":   { upstream: ["85"], downstream: ["63", "61"], cross_sell: ["73", "70"] },
+    "63":   { upstream: ["62"], downstream: ["73", "70"], cross_sell: ["61", "64"] },
+    "6204": { upstream: ["62"], downstream: ["69", "70"], cross_sell: ["73", "85"] },             // BI financeiro
+    // ── Financeiro ──
+    "64":   { upstream: ["62", "66"], downstream: ["65"], cross_sell: ["69", "70"] },
+    "65":   { upstream: ["64", "66"], downstream: [], cross_sell: ["69", "70"] },
+    "66":   { upstream: ["62"], downstream: ["64", "65"], cross_sell: ["69", "70"] },
+    "6499": { upstream: ["69", "62"], downstream: ["64"], cross_sell: ["66", "70"] },             // Crédito estruturado
+    // ── Saúde ──
+    "86":   { upstream: ["21", "32"], downstream: ["65", "87", "88"], cross_sell: ["62", "85"] },
+    "87":   { upstream: ["86", "21"], downstream: ["65"], cross_sell: ["88", "85"] },
+    "88":   { upstream: ["86"], downstream: ["65"], cross_sell: ["87", "85"] },
+    "21":   { upstream: ["20"], downstream: ["86", "47"], cross_sell: ["32", "72"] },             // Farmacêutica
+    "32":   { upstream: ["24", "25"], downstream: ["86"], cross_sell: ["21", "71"] },             // Equipamentos médicos
+    // ── Educação ──
+    "85":   { upstream: ["58", "62"], downstream: ["73"], cross_sell: ["86", "63"] },
+    "8511": { upstream: ["58", "62"], downstream: ["73"], cross_sell: ["86", "63"] },
+    "8599": { upstream: ["58", "62"], downstream: ["73"], cross_sell: ["86", "63"] },
+    // ── Agronegócio ──
+    "01":   { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },
+    "02":   { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },
+    "03":   { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },
+    // ── Indústria / Alimentos ──
+    "10":   { upstream: ["01", "20"], downstream: ["46", "47"], cross_sell: ["49", "52"] },
+    "20":   { upstream: ["07", "08"], downstream: ["01", "10", "21"], cross_sell: ["28", "71"] },
+    "22":   { upstream: ["20"], downstream: ["25", "29"], cross_sell: ["24", "28"] },
+    "23":   { upstream: ["08"], downstream: ["41", "42"], cross_sell: ["24", "71"] },
+    "24":   { upstream: ["07", "08"], downstream: ["25", "29"], cross_sell: ["28", "71"] },
+    "25":   { upstream: ["24"], downstream: ["28", "29"], cross_sell: ["33", "71"] },
+    "28":   { upstream: ["24", "25"], downstream: ["01", "10", "35"], cross_sell: ["33", "71"] },
+    "29":   { upstream: ["24", "25", "22"], downstream: ["45", "49"], cross_sell: ["30", "33"] },
+    // ── Construção ──
+    "41":   { upstream: ["23", "24", "25"], downstream: ["68"], cross_sell: ["43", "71"] },
+    "43":   { upstream: ["23", "25"], downstream: ["41", "61"], cross_sell: ["71", "42"] },
+    // ── Energia ──
+    "35":   { upstream: ["26", "28"], downstream: ["43"], cross_sell: ["42", "71"] },
+    // ── Varejo ──
+    "45":   { upstream: ["29", "30"], downstream: [], cross_sell: ["49", "64"] },
+    "46":   { upstream: ["10", "20", "22"], downstream: ["47"], cross_sell: ["49", "52"] },
+    "47":   { upstream: ["46"], downstream: ["62"], cross_sell: ["49", "73"] },
+    // ── Logística ──
+    "49":   { upstream: ["29", "30"], downstream: ["52"], cross_sell: ["64", "73"] },
+    "52":   { upstream: ["41", "43"], downstream: ["01", "10", "46"], cross_sell: ["49", "62"] }, // Armazenagem
+    // ── Marketing / Publicidade ──
+    "73":   { upstream: ["62", "63"], downstream: ["47", "85"], cross_sell: ["70", "69"] },
   };
 
   // ── SECTOR BOTTLENECK MAP ──────────────────────────────────────────────
@@ -835,6 +882,52 @@ export default function Matching() {
         "52": "Internaliza armazenagem — reduz dependência",
         "49": "Consolida rotas e reduz ociosidade",
         "64": "Fintech de frete — novo canal de receita",
+      },
+    },
+    // ── Novos setores ──
+    "01": {
+      resolucoes: {
+        "52": "Internaliza armazenagem — reduz perda e custo logístico",
+        "49": "Controla logística própria — independência operacional",
+        "10": "Captura margem de beneficiamento — verticaliza produção",
+        "28": "Reduz custo de maquinário via verticalização",
+        "20": "Internaliza insumos agrícolas — reduz dependência",
+      },
+    },
+    "10": {
+      resolucoes: {
+        "01": "Verticaliza matéria-prima — segurança de suprimento",
+        "46": "Canal atacado direto — elimina intermediário",
+        "49": "Reduz frete internalizando logística",
+        "52": "Internaliza armazenagem — reduz perda",
+        "47": "Canal varejo próprio — captura margem final",
+      },
+    },
+    "35": {
+      resolucoes: {
+        "43": "Internaliza instalação — reduz custo de implantação",
+        "26": "Verticaliza equipamentos — reduz dependência de fornecedor",
+        "73": "Reduz CAC via marketing integrado",
+        "28": "Internaliza produção de equipamentos",
+        "62": "Plataforma digital de gestão energética",
+      },
+    },
+    "70": {
+      resolucoes: {
+        "62": "Plataforma digital própria — escala sem custo linear",
+        "69": "Amplia oferta contábil — ticket médio maior",
+        "73": "Canal marketing integrado — reduz custo de captação",
+        "85": "Canal de autoridade via educação executiva",
+        "64": "Amplia oferta com produtos financeiros",
+      },
+    },
+    "66": {
+      resolucoes: {
+        "62": "Plataforma digital — reduz custo operacional",
+        "69": "Back-office integrado — compliance e contabilidade",
+        "73": "Canal de captação — reduz custo de aquisição",
+        "85": "Educação financeira como canal de aquisição",
+        "70": "Gestão integrada — amplia oferta de advisory",
       },
     },
   };
@@ -993,7 +1086,7 @@ export default function Matching() {
     const wSum = Object.values(baseWeights).reduce((a, b) => a + b, 0);
     for (const key of Object.keys(baseWeights)) baseWeights[key] /= wSum;
 
-    const synergy_score = Math.round(
+    let synergy_score = Math.round(
       revenue_synergy * baseWeights.revenue +
       cost_synergy * baseWeights.cost +
       vertical_synergy * baseWeights.vertical +
@@ -1064,8 +1157,25 @@ export default function Matching() {
     if (numUfs > 1) consolidator_score += 20;
     consolidator_score = Math.min(100, consolidator_score);
 
+    // ── CONSOLIDATOR BOOST — bonus universal no synergy_score ──
+    if (consolidator_score > 85) synergy_score = Math.min(100, synergy_score + 10);
+    else if (consolidator_score > 70) synergy_score = Math.min(100, synergy_score + 5);
+    const boosted_compatibility = Math.min(100, Math.max(0, synergy_score));
+
+    // ── TIER PRIORITY SYSTEM ──
+    let tier_priority = 6;
+    let tier_label = "Expansão Geográfica";
+    if (sameCnae4 && sameCity) { tier_priority = 1; tier_label = "Consolidação Local"; }
+    else if (sameCnae4 && sameState) { tier_priority = 2; tier_label = "Consolidação Regional"; }
+    else if (sameCnae2 && sameState) { tier_priority = 2; tier_label = "Consolidação Regional"; }
+    else if (isUpstream && sameState) { tier_priority = 3; tier_label = "Verticalização"; }
+    else if (isUpstream) { tier_priority = 3; tier_label = "Verticalização"; }
+    else if (isDownstream) { tier_priority = 4; tier_label = "Captura de Canal"; }
+    else if (isCrossSell) { tier_priority = 5; tier_label = "Cross-sell"; }
+    else if (targetState && company.state && company.state !== targetState) { tier_priority = 6; tier_label = "Expansão Geográfica"; }
+
     return {
-      compatibility_score,
+      compatibility_score: boosted_compatibility,
       dimensions: {
         sector_fit, size_fit, location_fit, financial_fit, risk_fit,
         revenue_synergy, cost_synergy, vertical_synergy, consolidation_synergy, strategic_synergy,
@@ -1073,6 +1183,8 @@ export default function Matching() {
         gain_insights: uniqueInsights,
         bottleneck_resolution,
         consolidator_score,
+        tier_priority,
+        tier_label,
       },
     };
   }
@@ -1840,8 +1952,18 @@ export default function Matching() {
                                     <Badge className="text-[10px] bg-accent/15 text-accent border-accent/30 border">
                                       {dimensions.synergy_type}
                                     </Badge>
-                                  )}
-                                  {/* Consolidator badge */}
+                                   )}
+                                   {/* Tier badge */}
+                                   {dimensions?.tier_priority != null && dimensions.tier_priority <= 5 && (
+                                     <Badge variant="outline" className={`text-[10px] ${
+                                       dimensions.tier_priority <= 2 ? "border-success/40 text-success" :
+                                       dimensions.tier_priority <= 4 ? "border-primary/40 text-primary" :
+                                       "border-muted-foreground/40 text-muted-foreground"
+                                     }`}>
+                                       T{dimensions.tier_priority} · {dimensions.tier_label}
+                                      </Badge>
+                                   )}
+                                   {/* Consolidator badge */}
                                   {dimensions?.consolidator_score != null && dimensions.consolidator_score > 60 && (
                                     <Badge className="text-[10px] bg-warning/15 text-warning border-warning/30 border">
                                       <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
