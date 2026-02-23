@@ -77,6 +77,9 @@ interface MatchDimensions {
   consolidation_synergy: number;
   strategic_synergy: number;
   synergy_type: string;
+  gain_insights: string[];
+  bottleneck_resolution: string | null;
+  consolidator_score: number;
 }
 
 interface DimensionExplanations {
@@ -750,6 +753,92 @@ export default function Matching() {
     "01": { upstream: ["20", "28"], downstream: ["10", "46"], cross_sell: ["35", "49"] },       // Agricultura
   };
 
+  // ── SECTOR BOTTLENECK MAP ──────────────────────────────────────────────
+  const SECTOR_BOTTLENECK_MAP: Record<string, { resolucoes: Record<string, string> }> = {
+    "61": {
+      resolucoes: {
+        "80": "Reduz churn via cross-sell de CFTV/segurança",
+        "43": "Reduz custo de instalação internalizando equipe de campo",
+        "61": "Elimina concorrente direto na mesma região",
+        "35": "Cross-sell de energia solar na base existente",
+        "62": "Automatiza gestão de rede e NOC — reduz custo operacional",
+      },
+    },
+    "69": {
+      resolucoes: {
+        "62": "Automatiza entregas via software próprio — reduz dependência de pessoas",
+        "69": "Aumenta base de clientes e dilui concentração",
+        "73": "Canal de aquisição próprio via marketing",
+        "85": "Gera autoridade e canal via educação corporativa",
+      },
+    },
+    "6920": {
+      resolucoes: {
+        "62": "Automatiza entregas via software próprio — reduz dependência de pessoas",
+        "69": "Aumenta base de clientes e dilui concentração",
+        "73": "Canal de aquisição próprio via marketing",
+        "85": "Gera autoridade e canal via educação corporativa",
+        "70": "Amplia oferta de gestão empresarial — ticket médio maior",
+      },
+    },
+    "62": {
+      resolucoes: {
+        "73": "Reduz CAC via canal de marketing integrado",
+        "85": "Canal de aquisição via educação/treinamento",
+        "62": "Consolida base de clientes e reduz concorrência",
+        "63": "Monetiza dados como novo produto",
+      },
+    },
+    "64": {
+      resolucoes: {
+        "62": "Plataforma digital própria — reduz custo de canal",
+        "66": "Amplia oferta de produtos financeiros",
+        "69": "Internaliza compliance e back-office",
+        "73": "Reduz custo de aquisição de clientes",
+      },
+    },
+    "86": {
+      resolucoes: {
+        "62": "Digitaliza prontuários e agendamento — reduz overhead",
+        "85": "Canal de educação continuada para profissionais",
+        "21": "Internaliza insumos farmacêuticos — reduz custo",
+        "86": "Aumenta capacidade e dilui custos fixos",
+      },
+    },
+    "47": {
+      resolucoes: {
+        "49": "Internaliza logística — reduz frete e prazo",
+        "73": "Marketing integrado — reduz CAC",
+        "62": "E-commerce e gestão digital — amplia canal",
+        "46": "Verticaliza compras — melhora margem",
+      },
+    },
+    "41": {
+      resolucoes: {
+        "43": "Internaliza mão de obra de instalação — reduz custo",
+        "23": "Verticaliza insumos de construção",
+        "71": "Internaliza projetos de engenharia",
+        "68": "Captura margem imobiliária downstream",
+      },
+    },
+    "85": {
+      resolucoes: {
+        "62": "Plataforma EAD própria — escala sem custo linear",
+        "73": "Marketing digital integrado — reduz custo de captação",
+        "63": "Monetiza dados educacionais",
+        "85": "Consolida unidades e dilui overhead",
+      },
+    },
+    "49": {
+      resolucoes: {
+        "62": "Gestão de frota e roteirização digital",
+        "52": "Internaliza armazenagem — reduz dependência",
+        "49": "Consolida rotas e reduz ociosidade",
+        "64": "Fintech de frete — novo canal de receita",
+      },
+    },
+  };
+
   const SYNERGY_PROFILE_WEIGHTS: Record<string, Record<string, number>> = {
     "Agressivo":    { revenue: 0.30, cost: 0.15, vertical: 0.25, consolidation: 0.20, strategic: 0.10 },
     "Moderado":     { revenue: 0.25, cost: 0.20, vertical: 0.20, consolidation: 0.20, strategic: 0.15 },
@@ -924,12 +1013,60 @@ export default function Matching() {
 
     const compatibility_score = Math.min(100, Math.max(0, synergy_score));
 
+    // ── GPI: Gain Potential Index — frases de valor ──
+    const gain_insights: string[] = [];
+    if (revenue_synergy > 60 && isCrossSell) gain_insights.push("Cross-sell direto na base de clientes existente");
+    if (revenue_synergy > 60 && isDownstream) gain_insights.push("Captura margem do canal de distribuição");
+    if (cost_synergy > 60 && sameCity) gain_insights.push("Redução de estrutura duplicada na mesma praça");
+    if (cost_synergy > 60 && sameCnae2 && !sameCity) gain_insights.push("Diluição de overhead operacional — mesmo setor");
+    if (vertical_synergy > 60 && isUpstream) gain_insights.push("Internaliza fornecedor crítico — reduz dependência operacional");
+    if (vertical_synergy > 60 && isDownstream) gain_insights.push("Captura margem do canal de distribuição");
+    if (consolidation_synergy > 60 && sameCnae4) gain_insights.push("Consolidação horizontal — dilui overhead e aumenta market share");
+    if (strategic_synergy > 60 && targetState && company.state && company.state !== targetState) gain_insights.push("Diversificação geográfica — reduz concentração de receita");
+    if (consolidation_synergy > 50 && targetSizeIdx < buyerSizeIdx) gain_insights.push("Alvo menor — integração operacional simplificada");
+    // Deduplicate
+    const uniqueInsights = [...new Set(gain_insights)].slice(0, 3);
+
+    // ── BOTTLENECK RESOLUTION — cruza gargalo do buyer com CNAE do seller ──
+    let bottleneck_resolution: string | null = null;
+    if (buyerCnaePrefix && buyerBottlenecks.length > 0) {
+      const sectorMap = SECTOR_BOTTLENECK_MAP[buyerCnaePrefix] || SECTOR_BOTTLENECK_MAP[buyerCnaePrefix.substring(0, 2)];
+      if (sectorMap) {
+        // Try matching seller CNAE against resolutions
+        const sellerCnae2 = companyCnae.substring(0, 2);
+        const sellerCnae4 = companyCnae.substring(0, 4);
+        const resolution = sectorMap.resolucoes[sellerCnae4] || sectorMap.resolucoes[sellerCnae2];
+        if (resolution) {
+          bottleneck_resolution = resolution;
+        }
+      }
+    }
+
+    // ── CONSOLIDATOR LIKELIHOOD SCORE ──
+    let consolidator_score = 0;
+    // Porte "05" (Demais) = empresa maior
+    const porte = company.porte || company.porte_empresa || null;
+    if (porte === "05" || porte === "DEMAIS") consolidator_score += 30;
+    // Capital social alto
+    if (targetCapital && targetCapital > 1_000_000) consolidator_score += 15;
+    // Capital > 2x average (proxy: > 500K for small sectors)
+    if (targetCapital && targetCapital > 500_000) consolidator_score += 25;
+    // Nome fantasia presente = mais estruturada
+    const nomeFantasia = company.nome_fantasia || company.trade_name || null;
+    if (nomeFantasia && nomeFantasia.trim() !== "" && nomeFantasia !== "0" && nomeFantasia !== company.name) consolidator_score += 10;
+    // Mesmo CNAE do buyer
+    if (sameCnae4 || sameCnae2) consolidator_score += 20;
+    consolidator_score = Math.min(100, consolidator_score);
+
     return {
       compatibility_score,
       dimensions: {
         sector_fit, size_fit, location_fit, financial_fit, risk_fit,
         revenue_synergy, cost_synergy, vertical_synergy, consolidation_synergy, strategic_synergy,
         synergy_type,
+        gain_insights: uniqueInsights,
+        bottleneck_resolution,
+        consolidator_score,
       },
     };
   }
@@ -1692,27 +1829,33 @@ export default function Matching() {
                               <div className="flex items-center gap-2 flex-wrap">
                               <Badge variant="outline" className="text-xs">{sectorLabel(m.companies?.sector || null)}</Badge>
                                 {m.companies?.state && <span className="text-xs text-muted-foreground">{m.companies.city ? `${m.companies.city}, ` : ""}{m.companies.state}</span>}
-                                 {/* Synergy type badge */}
-                                 {dimensions?.synergy_type && (
-                                   <Badge className="text-[10px] bg-accent/15 text-accent border-accent/30 border">
-                                     {dimensions.synergy_type}
-                                   </Badge>
-                                 )}
-                                 {/* Capital Social badge */}
-                                 {(() => {
-                                   const capital = extractCapitalFromDescription(m.companies?.description ?? null);
-                                   return capital ? (
-                                     <Badge variant="outline" className="text-[10px] border-accent/40 text-accent">
-                                       <DollarSign className="w-2.5 h-2.5 mr-0.5" />Capital: {formatCurrency(capital)}
-                                     </Badge>
-                                   ) : null;
-                                 })()}
-                                 {isFromNational && (
-                                   <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
-                                     <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
-                                   </Badge>
-                                 )}
-                               </div>
+                                  {/* Synergy type badge */}
+                                  {dimensions?.synergy_type && (
+                                    <Badge className="text-[10px] bg-accent/15 text-accent border-accent/30 border">
+                                      {dimensions.synergy_type}
+                                    </Badge>
+                                  )}
+                                  {/* Consolidator badge */}
+                                  {dimensions?.consolidator_score != null && dimensions.consolidator_score > 60 && (
+                                    <Badge className="text-[10px] bg-warning/15 text-warning border-warning/30 border">
+                                      <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
+                                    </Badge>
+                                  )}
+                                  {/* Capital Social badge */}
+                                  {(() => {
+                                    const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                                    return capital ? (
+                                      <Badge variant="outline" className="text-[10px] border-accent/40 text-accent">
+                                        <DollarSign className="w-2.5 h-2.5 mr-0.5" />Capital: {formatCurrency(capital)}
+                                      </Badge>
+                                    ) : null;
+                                  })()}
+                                  {isFromNational && (
+                                    <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                      <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
+                                    </Badge>
+                                  )}
+                                </div>
                            </div>
                            {/* Score gauge */}
                            <div className={`flex flex-col items-center justify-center rounded-lg border px-3 py-2 ${scoreBg(score)}`}>
@@ -1769,9 +1912,31 @@ export default function Matching() {
                                 </div>
                               ))}
                             </div>
+                           )}
+
+                          {/* GPI Insights + Bottleneck Resolution (collapsed view) */}
+                          {dimensions && !isExpanded && (
+                            <>
+                              {dimensions.gain_insights && dimensions.gain_insights.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {dimensions.gain_insights.map((insight, i) => (
+                                    <div key={i} className="flex items-start gap-1.5">
+                                      <TrendingUp className="w-3 h-3 text-success mt-0.5 flex-shrink-0" />
+                                      <span className="text-[11px] text-muted-foreground leading-tight">{insight}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {dimensions.bottleneck_resolution && (
+                                <div className="mt-2 flex items-start gap-1.5 rounded-md border border-accent/20 bg-accent/5 px-2 py-1.5">
+                                  <Target className="w-3 h-3 text-accent mt-0.5 flex-shrink-0" />
+                                  <span className="text-[11px] text-accent leading-tight font-medium">{dimensions.bottleneck_resolution}</span>
+                                </div>
+                              )}
+                            </>
                           )}
 
-                         {/* Actions — feedback buttons */}
+                          {/* Actions — feedback buttons */}
                          <div className="flex items-center justify-between mt-2">
                            <div className="flex gap-1 flex-wrap">
                              <Button
@@ -1927,26 +2092,76 @@ export default function Matching() {
                                          </div>
                                        );
                                      })}
-                                   </div>
-                                   <div className="mt-4">
-                                     <h4 className="font-display font-semibold text-sm mb-2 text-center">Radar de Compatibilidade</h4>
-                                     <ResponsiveContainer width="100%" height={220}>
-                                       <RadarChart data={[
-                                         { dim: "Receita", value: dimensions.revenue_synergy },
-                                         { dim: "Custo", value: dimensions.cost_synergy },
-                                         { dim: "Vertical", value: dimensions.vertical_synergy },
-                                         { dim: "Consolid.", value: dimensions.consolidation_synergy },
-                                         { dim: "Estratég.", value: dimensions.strategic_synergy },
-                                       ]}>
-                                         <PolarGrid stroke="hsl(var(--border))" />
-                                         <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                                         <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
-                                         <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
-                                       </RadarChart>
-                                     </ResponsiveContainer>
-                                   </div>
-                                 </div>
-                               )}
+                                    </div>
+
+                                    {/* GPI — Potencial de Geração de Valor */}
+                                    {dimensions.gain_insights && dimensions.gain_insights.length > 0 && (
+                                      <div className="mt-4 rounded-lg border border-success/20 bg-success/5 p-3">
+                                        <h4 className="font-semibold text-xs mb-2 text-success flex items-center gap-1">
+                                          <TrendingUp className="w-3.5 h-3.5" />Potencial de Geração de Valor
+                                        </h4>
+                                        <ul className="space-y-1.5">
+                                          {dimensions.gain_insights.map((insight, i) => (
+                                            <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                              <span className="text-success mt-0.5">•</span>{insight}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+
+                                    {/* Bottleneck Resolution */}
+                                    {dimensions.bottleneck_resolution && (
+                                      <div className="mt-3 rounded-lg border border-accent/20 bg-accent/5 p-3">
+                                        <h4 className="font-semibold text-xs mb-1.5 text-accent flex items-center gap-1">
+                                          <Target className="w-3.5 h-3.5" />Resolve seu Gargalo
+                                        </h4>
+                                        <p className="text-xs text-muted-foreground">{dimensions.bottleneck_resolution}</p>
+                                      </div>
+                                    )}
+
+                                    {/* Consolidator Score */}
+                                    {dimensions.consolidator_score != null && dimensions.consolidator_score > 0 && (
+                                      <div className="mt-3">
+                                        <div className="flex items-center justify-between mb-1">
+                                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                            <Building2 className="w-3 h-3" />Consolidator Score
+                                          </span>
+                                          <span className={`text-xs font-mono font-bold ${dimensions.consolidator_score > 60 ? "text-warning" : "text-muted-foreground"}`}>
+                                            {dimensions.consolidator_score}/100
+                                          </span>
+                                        </div>
+                                        <div className="h-2.5 rounded-full bg-muted overflow-hidden">
+                                          <div
+                                            className={`h-full rounded-full transition-all ${dimensions.consolidator_score > 60 ? "bg-warning" : "bg-muted-foreground/40"}`}
+                                            style={{ width: `${dimensions.consolidator_score}%` }}
+                                          />
+                                        </div>
+                                        {dimensions.consolidator_score > 60 && (
+                                          <p className="text-[10px] text-warning mt-1">Empresa estruturada para consolidação — alto potencial de plataforma</p>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    <div className="mt-4">
+                                      <h4 className="font-display font-semibold text-sm mb-2 text-center">Radar de Compatibilidade</h4>
+                                      <ResponsiveContainer width="100%" height={220}>
+                                        <RadarChart data={[
+                                          { dim: "Receita", value: dimensions.revenue_synergy },
+                                          { dim: "Custo", value: dimensions.cost_synergy },
+                                          { dim: "Vertical", value: dimensions.vertical_synergy },
+                                          { dim: "Consolid.", value: dimensions.consolidation_synergy },
+                                          { dim: "Estratég.", value: dimensions.strategic_synergy },
+                                        ]}>
+                                          <PolarGrid stroke="hsl(var(--border))" />
+                                          <PolarAngleAxis dataKey="dim" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                                          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
+                                          <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
+                                        </RadarChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  </div>
+                                )}
                             </div>
                           </div>
                         )}
