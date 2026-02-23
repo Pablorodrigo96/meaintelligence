@@ -175,6 +175,7 @@ serve(async (req) => {
 
     // DISTINCT ON (cnpj_basico) = 1 result per company, regardless of branch count
     // This prevents Telefônica's 500 branches from filling all 25 slots
+    // Phase 2: subqueries add num_filiais (branch count) and num_ufs (multi-state presence)
     const query = `
       SELECT DISTINCT ON (e.cnpj_basico)
         e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv AS cnpj_completo,
@@ -186,7 +187,13 @@ serve(async (req) => {
         e.situacao_cadastral,
         em.razao_social,
         em.capital_social,
-        em.porte_empresa
+        em.porte_empresa,
+        (SELECT COUNT(*) FROM estabelecimentos e2
+         WHERE e2.cnpj_basico = e.cnpj_basico
+           AND e2.situacao_cadastral = '02') AS num_filiais,
+        (SELECT COUNT(DISTINCT e3.uf) FROM estabelecimentos e3
+         WHERE e3.cnpj_basico = e.cnpj_basico
+           AND e3.situacao_cadastral = '02') AS num_ufs
       FROM estabelecimentos e
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
@@ -227,6 +234,8 @@ serve(async (req) => {
         description: `CNAE: ${row.cnae_fiscal_principal || "N/A"} | Porte: ${row.porte_empresa || "N/A"} | Capital Social: ${capitalSocial ? `R$${(capitalSocial / 1000).toFixed(0)}K` : "N/A"}`,
         location: `${cityName}, ${row.uf || ""}`.trim().replace(/^,\s*/, ""),
         source: "national_db",
+        num_filiais: parseInt(row.num_filiais) || 1,
+        num_ufs: parseInt(row.num_ufs) || 1,
       };
     });
 

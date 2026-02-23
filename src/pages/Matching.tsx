@@ -1042,20 +1042,26 @@ export default function Matching() {
       }
     }
 
-    // ── CONSOLIDATOR LIKELIHOOD SCORE ──
+    // ── CONSOLIDATOR LIKELIHOOD SCORE (Phase 2) ──
     let consolidator_score = 0;
     // Porte "05" (Demais) = empresa maior
     const porte = company.porte || company.porte_empresa || null;
-    if (porte === "05" || porte === "DEMAIS") consolidator_score += 30;
+    if (porte === "05" || porte === "DEMAIS") consolidator_score += 20;
     // Capital social alto
-    if (targetCapital && targetCapital > 1_000_000) consolidator_score += 15;
+    if (targetCapital && targetCapital > 1_000_000) consolidator_score += 10;
     // Capital > 2x average (proxy: > 500K for small sectors)
-    if (targetCapital && targetCapital > 500_000) consolidator_score += 25;
+    if (targetCapital && targetCapital > 500_000) consolidator_score += 10;
     // Nome fantasia presente = mais estruturada
     const nomeFantasia = company.nome_fantasia || company.trade_name || null;
-    if (nomeFantasia && nomeFantasia.trim() !== "" && nomeFantasia !== "0" && nomeFantasia !== company.name) consolidator_score += 10;
+    if (nomeFantasia && nomeFantasia.trim() !== "" && nomeFantasia !== "0" && nomeFantasia !== company.name) consolidator_score += 5;
     // Mesmo CNAE do buyer
-    if (sameCnae4 || sameCnae2) consolidator_score += 20;
+    if (sameCnae4 || sameCnae2) consolidator_score += 10;
+    // Phase 2: filiais e presença multi-UF (dados reais do banco nacional)
+    const numFiliais = (company as any).num_filiais ?? 1;
+    const numUfs = (company as any).num_ufs ?? 1;
+    if (numFiliais > 3) consolidator_score += 25;
+    else if (numFiliais > 1) consolidator_score += 10;
+    if (numUfs > 1) consolidator_score += 20;
     consolidator_score = Math.min(100, consolidator_score);
 
     return {
