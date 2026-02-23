@@ -1,168 +1,201 @@
 
 
-## Synergy Score: Motor de Sinergia Estrutural para o Matching
+## Evolucao do Motor de Sinergia: GPI + Gargalos por Setor + Consolidator Score
 
 ### Objetivo
 
-Substituir o score simplista atual (sector_fit + size_fit + location_fit + financial_fit + risk_fit) por um **Synergy Score** de 5 pilares que classifica automaticamente o **tipo de sinergia** e estima o **potencial de geracao de valor** de cada match.
+Adicionar 3 camadas de inteligencia ao matching existente:
+1. **Gain Potential Index (GPI)** com frases explicativas de valor
+2. **Matriz de gargalos por setor** que cruza o problema do buyer com o CNAE do seller
+3. **Consolidator Likelihood Score** que detecta empresas ja estruturadas para consolidar
 
-### Os 5 Pilares do Synergy Score
+### 1. Gain Potential Index (GPI) — Frases de Valor
 
-| Pilar | O que mede | Peso base |
-|---|---|---|
-| Revenue Synergy | Cross-sell, nova base de clientes, canal complementar | 25% |
-| Cost Synergy | Reducao de estrutura duplicada, mesma praca, mesmo setor | 20% |
-| Vertical Integration | Internalizacao de margem, CNAE upstream/downstream | 20% |
-| Consolidation (Roll-up) | Escala, mercado fragmentado, capital baixo, porte similar | 20% |
-| Strategic (Multiplo) | Diversificacao geografica, reducao de risco, maturidade | 15% |
+Hoje o sistema calcula os 5 pilares (revenue, cost, vertical, consolidation, strategic) mas nao explica POR QUE aquele match gera valor.
 
-### Como funciona (deterministico, zero IA)
+**Novo comportamento:** Para cada match, gerar 1-3 frases curtas que explicam o ganho potencial.
 
-**1. Classificacao automatica do tipo de sinergia**
-
-Para cada empresa candidata, o sistema cruza:
-- CNAE do buyer vs. CNAE do target
-- Estado/cidade do buyer vs. target
-- Porte/capital do buyer vs. target
-- Cadeia de valor (CNAE upstream/downstream)
-
-E classifica como:
-- **Horizontal**: mesmo CNAE ou CNAE muito proximo
-- **Vertical**: CNAE na cadeia upstream/downstream
-- **Complementar**: CNAE adjacente com potencial de cross-sell
-- **Consolidacao**: horizontal + porte menor + mercado fragmentado
-- **Estrategica**: geografia diferente ou setor adjacente que reduz risco
-
-**2. Matriz CNAE de Cadeia de Valor**
-
-Nova estrutura que mapeia relacoes entre CNAEs:
+Logica deterministica baseada nos pilares dominantes:
 
 ```text
-CNAE_VALUE_CHAIN = {
+SE revenue_synergy > 60 E isCrossSell:
+  "Cross-sell direto na base de clientes existente"
+
+SE cost_synergy > 60 E sameCity:
+  "Reducao de estrutura duplicada na mesma praca"
+
+SE vertical_synergy > 60 E isUpstream:
+  "Internaliza fornecedor critico — reduz dependencia operacional"
+
+SE vertical_synergy > 60 E isDownstream:
+  "Captura margem do canal de distribuicao"
+
+SE consolidation_synergy > 60 E sameCnae4:
+  "Consolidacao horizontal — dilui overhead e aumenta market share"
+
+SE strategic_synergy > 60 E estadoDiferente:
+  "Diversificacao geografica — reduz concentracao de receita"
+```
+
+Cada frase fica acessivel no resultado do match como `gain_insights: string[]`.
+
+### 2. Matriz de Gargalos por Setor
+
+Hoje os gargalos so ajustam pesos. O novo comportamento cruza gargalos declarados com o CNAE do seller para gerar insights especificos.
+
+**Nova constante `SECTOR_BOTTLENECK_MAP`:**
+
+```text
+{
   "61" (Telecom/ISP): {
-    upstream: ["43" (instalacao fibra), "26" (equipamentos)],
-    downstream: ["62" (software), "63" (dados)],
-    cross_sell: ["80" (seguranca/CFTV), "35" (energia solar)],
+    gargalos_tipicos: ["churn alto", "custo de instalacao", "capex elevado", "concorrencia regional"],
+    resolucoes: {
+      "80": "Reduz churn via cross-sell de CFTV/seguranca",
+      "43": "Reduz custo de instalacao internalizando equipe de campo",
+      "61": "Elimina concorrente direto na mesma regiao",
+      "35": "Cross-sell de energia solar na base existente",
+    }
   },
-  "6920" (Consultoria financeira): {
-    upstream: ["6920" (contabilidade)],
-    downstream: ["64" (banking), "66" (investimentos)],
-    cross_sell: ["62" (software/ERP), "73" (marketing)],
+  "69" (Consultoria/BPO): {
+    gargalos_tipicos: ["concentracao de clientes", "dependencia de pessoas-chave", "ticket medio baixo"],
+    resolucoes: {
+      "62": "Automatiza entregas via software proprio — reduz dependencia de pessoas",
+      "69": "Aumenta base de clientes e dilui concentracao",
+      "73": "Canal de aquisicao proprio via marketing",
+      "85": "Gera autoridade e canal via educacao corporativa",
+    }
+  },
+  "62" (Software): {
+    gargalos_tipicos: ["custo de aquisicao alto", "churn", "escala limitada"],
+    resolucoes: {
+      "73": "Reduz CAC via canal de marketing integrado",
+      "85": "Canal de aquisicao via educacao/treinamento",
+      "62": "Consolida base de clientes e reduz concorrencia",
+      "63": "Monetiza dados como novo produto",
+    }
   },
   // ... mais setores
 }
 ```
 
-**3. Calculo de cada pilar**
-
-- **Revenue Synergy** (0-100):
-  - CNAE cross-sell match: +40
-  - Mesmo estado: +20 (base de clientes acessivel)
-  - Porte compativel (diff <= 1): +20
-  - CNAE complementar downstream: +20
-
-- **Cost Synergy** (0-100):
-  - Mesmo CNAE (horizontal): +40
-  - Mesma cidade: +30, mesmo estado: +15
-  - Porte similar (diff = 0): +20
-  - Capital social proximo (ratio < 3x): +10
-
-- **Vertical Integration** (0-100):
-  - CNAE upstream match: +50
-  - CNAE downstream match: +40
-  - Mesmo estado (logistica): +10
-
-- **Consolidation** (0-100):
-  - Mesmo CNAE exato (4 digitos): +40
-  - Target porte menor que buyer: +25
-  - Capital social baixo (tier Micro/Pequena): +20
-  - Mesma regiao: +15
-
-- **Strategic** (0-100):
-  - Estado diferente (diversificacao geo): +30
-  - Setor adjacente (SECTOR_ADJACENCY): +25
-  - Empresa madura (alta idade, capital medio): +25
-  - Reduz concentracao setorial: +20
-
-**4. Score final e label**
+Quando o buyer declara gargalos, o sistema cruza com o CNAE do seller e gera:
 
 ```text
-synergy_score = revenue * 0.25 + cost * 0.20 + vertical * 0.20 + consolidation * 0.20 + strategic * 0.15
+"Essa aquisicao resolve seu gargalo: reduz churn via cross-sell de CFTV/seguranca"
 ```
 
-Label principal = pilar com maior pontuacao:
-- "Sinergia de Receita" / "Reducao de Custo" / "Verticalizacao" / "Consolidacao" / "Estrategica"
+Isso fica no campo `bottleneck_resolution: string | null` do resultado.
 
-### Perfil do Comprador influencia os pesos
+### 3. Consolidator Likelihood Score
 
-Os pesos dos pilares mudam conforme o perfil do investidor:
+**Novo campo no resultado:** `consolidator_score` (0-100) que indica se uma empresa ja esta estruturada para consolidar.
 
-| Perfil | Revenue | Cost | Vertical | Consolidation | Strategic |
-|---|---|---|---|---|---|
-| Agressivo | 0.30 | 0.15 | 0.25 | 0.20 | 0.10 |
-| Moderado | 0.25 | 0.20 | 0.20 | 0.20 | 0.15 |
-| Conservador | 0.15 | 0.30 | 0.15 | 0.15 | 0.25 |
+**Como calcular (com dados disponiveis):**
 
-### Input do Buyer (novo campo no Wizard Step 1)
+Os dados ja vem do banco nacional via `national-search`. Para calcular o consolidator score, precisamos de informacao adicional que pode ser obtida na mesma query ou em um passo separado.
 
-Adicionar ao wizard uma pergunta simples:
+**Indicadores disponiveis nos dados atuais:**
+- Capital social alto vs media do setor → proxy de estrutura
+- Porte "05" (Demais) → empresa maior que micro/pequena
+- Nome fantasia vs razao social (empresas estruturadas costumam ter nome fantasia)
 
-**"Qual e seu principal gargalo hoje?"**
-- [ ] Preciso de mais clientes / receita
-- [ ] Preciso reduzir custos operacionais
-- [ ] Dependo de fornecedores criticos
-- [ ] Quero crescer em novas regioes
-- [ ] Quero aumentar o valor da minha empresa
+**Indicadores que precisam de query adicional (fase 2):**
+- Contagem de estabelecimentos por cnpj_basico (filiais)
+- Presenca em mais de 1 UF
+- Idade da empresa (data de abertura)
 
-A resposta ajusta os pesos dos pilares automaticamente (ex: "mais clientes" = Revenue +15%, Cost -10%).
-
-Tambem adicionar campo "Meu CNAE principal" (select) para que o sistema saiba calcular upstream/downstream.
-
-### UX do card de resultado
+**Implementacao fase 1 (sem query adicional):**
 
 ```text
-PROVENET INTERNET LTDA                Score: 82
-[Telecom] [Florianopolis, SC]
-[Verticalizacao] [Capital: R$2,3M]
+consolidator_score = 0
 
-Sinergias identificadas:
+SE porte = "05" (Demais): +30
+SE capital_social > media_setor * 2: +25
+SE capital_social > 1_000_000: +15
+SE tem nome_fantasia: +10
+SE mesmo CNAE do buyer: +20
+```
+
+O score aparece como badge no card: "Potencial Consolidador" (score > 60).
+
+**Implementacao fase 2 (com query adicional na edge function):**
+
+Modificar `national-search` para incluir:
+- `COUNT(e2.cnpj_basico) as num_filiais` via subquery
+- `COUNT(DISTINCT e2.uf) as num_ufs` via subquery
+
+Isso permite:
+
+```text
+SE num_filiais > 3: +25
+SE num_ufs > 1: +20
+SE idade > 10 anos: +15
+```
+
+### Mudancas tecnicas
+
+**Arquivo: `src/pages/Matching.tsx`**
+
+1. **Adicionar constante `SECTOR_BOTTLENECK_MAP`** (~20 linhas) apos `CNAE_VALUE_CHAIN`
+
+2. **Adicionar constante `GPI_RULES`** — array de regras {condition, insight} para gerar frases
+
+3. **Expandir `scoreCompanyLocal()`:**
+   - Calcular `gain_insights: string[]` baseado nos pilares dominantes
+   - Calcular `bottleneck_resolution: string | null` cruzando gargalos do buyer com CNAE do seller
+   - Calcular `consolidator_score: number` baseado em capital/porte/nome fantasia
+   - Retornar esses 3 novos campos em `dimensions`
+
+4. **Expandir interface `MatchDimensions`:**
+   - Adicionar `gain_insights: string[]`
+   - Adicionar `bottleneck_resolution: string | null`
+   - Adicionar `consolidator_score: number`
+
+5. **Atualizar cards de resultado:**
+   - Mostrar `gain_insights` como lista de bullets abaixo das barras de sinergia
+   - Mostrar `bottleneck_resolution` com icone de alvo quando presente
+   - Mostrar badge "Potencial Consolidador" quando `consolidator_score > 60`
+
+6. **Atualizar expanded view:**
+   - Secao "Potencial de Geracao de Valor" com as frases do GPI
+   - Secao "Resolucao de Gargalos" quando aplicavel
+   - Barra de consolidator score
+
+### UX do card atualizado
+
+```text
+PROVENET INTERNET LTDA                   Score: 82
+[Telecom] [Florianopolis, SC]
+[Verticalizacao] [Potencial Consolidador]
+
+Sinergias:
   Receita:        ████████░░░░  68
   Custo:          ██████████░░  85
-  Verticalizacao: ████████████  92  <-- principal
+  Verticalizacao: ████████████  92
   Consolidacao:   ██████░░░░░░  55
   Estrategica:    ████░░░░░░░░  40
 
-Score: 82/100
+Potencial de valor:
+  * Internaliza fornecedor critico — reduz dependencia operacional
+  * Consolidacao horizontal — dilui overhead
 
-[Shortlist] [Contatado] [Ignorar]        [IA]
+Resolve seu gargalo:
+  -> Reduz custo de instalacao internalizando equipe de campo
+
+[Shortlist] [Contatado] [Ignorar]           [IA]
 ```
 
-### Detalhes tecnicos
+### Fases
 
-**Arquivos a modificar:**
+**Fase 1 (esta implementacao):** GPI frases + Matriz gargalos + Consolidator score basico (sem query adicional)
+
+**Fase 2 (futura):** Consolidator score avancado com contagem de filiais e presenca multi-UF via modificacao na edge function `national-search`
+
+### Arquivos a modificar
 
 | Arquivo | Mudanca |
 |---|---|
-| `src/pages/Matching.tsx` | Refatorar `scoreCompanyLocal()` para calcular 5 pilares de sinergia. Adicionar `CNAE_VALUE_CHAIN`. Adicionar campos no Wizard Step 1. Atualizar cards de resultado com barras de sinergia e label. |
+| `src/pages/Matching.tsx` | Adicionar constantes GPI_RULES, SECTOR_BOTTLENECK_MAP. Expandir scoreCompanyLocal(). Expandir MatchDimensions. Atualizar cards e expanded view. |
 
-**Nenhum arquivo novo necessario** — tudo fica dentro do Matching.tsx existente.
-
-**Mudancas especificas:**
-
-1. **Linhas ~703-716**: Expandir `SECTOR_ADJACENCY` para incluir `CNAE_VALUE_CHAIN` com upstream/downstream/cross_sell
-
-2. **Linhas ~718-722**: Expandir `PROFILE_WEIGHTS` para os 5 novos pilares (revenue, cost, vertical, consolidation, strategic)
-
-3. **Linhas ~752-801**: Refatorar `scoreCompanyLocal()` completamente:
-   - Calcular cada pilar separadamente
-   - Retornar `dimensions` com os 5 pilares + `synergy_type` (label do pilar dominante)
-   - Manter compatibilidade com o `MatchDimensions` type (adicionar novos campos)
-
-4. **Wizard Step 1 (~linhas 1016-1039)**: Adicionar select "Meu CNAE" e checkboxes "Qual seu gargalo?"
-
-5. **Cards de resultado (~linhas 1371-1397)**: Substituir barras genéricas por 5 mini-barras de sinergia com o label principal em badge
-
-6. **Step 3 resumo (~linhas 1178-1217)**: Mostrar pesos de sinergia configurados
-
-**Impacto no `MatchDimensions` type**: Adicionar `revenue_synergy`, `cost_synergy`, `vertical_synergy`, `consolidation_synergy`, `strategic_synergy`, `synergy_type` ao tipo existente.
+Nenhum arquivo novo necessario. Nenhuma mudanca no backend nesta fase.
 
