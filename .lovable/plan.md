@@ -1,201 +1,92 @@
 
 
-## Evolucao do Motor de Sinergia: GPI + Gargalos por Setor + Consolidator Score
+## Modelo Universal de Matching por Setor
 
 ### Objetivo
 
-Adicionar 3 camadas de inteligencia ao matching existente:
-1. **Gain Potential Index (GPI)** com frases explicativas de valor
-2. **Matriz de gargalos por setor** que cruza o problema do buyer com o CNAE do seller
-3. **Consolidator Likelihood Score** que detecta empresas ja estruturadas para consolidar
+Expandir a matriz `CNAE_VALUE_CHAIN` e `SECTOR_BOTTLENECK_MAP` para cobrir todos os setores principais com mapeamentos granulares de cadeia de valor (upstream, downstream, cross-sell), e refinar a logica de ordenacao para priorizar os matches mais valiosos.
 
-### 1. Gain Potential Index (GPI) — Frases de Valor
+### 1. Expansao do CNAE_VALUE_CHAIN
 
-Hoje o sistema calcula os 5 pilares (revenue, cost, vertical, consolidation, strategic) mas nao explica POR QUE aquele match gera valor.
+A matriz atual cobre ~20 CNAEs. Sera expandida para ~40+ entradas com mapeamentos especificos por setor:
 
-**Novo comportamento:** Para cada match, gerar 1-3 frases curtas que explicam o ganho potencial.
+| Setor | CNAEs base | Upstream | Downstream | Cross-sell |
+|---|---|---|---|---|
+| Telecom/ISP | 61, 6110, 6120, 6190 | 4221, 4321, 9512, 26 | 6201, 6311, 6190 | 8020, 35 |
+| Consultoria | 69, 6920, 70, 7020 | 6911, 6204 | 64, 66, 6499 | 62, 73, 85 |
+| Industria (generico) | 10-25, 27-32 | fornecedor insumo (20, 24) | 46, 47 (distribuicao) | 49, 52 (logistica) |
+| Educacao | 85, 8511-8599 | 58 (editora), 62 (LMS) | 73 (canal B2B) | 86 (saude ocupacional) |
+| Saude | 86, 87, 88 | 21 (farma), 32 (equip.) | 65 (planos) | 62 (telemedicina), 85 |
+| Agronegocio | 01, 02, 03 | 20 (insumos), 28 (maquinas) | 10 (beneficiamento), 46 (trading) | 35 (energia), 49 (transporte) |
+| Varejo | 45, 46, 47 | 10-25 (industria) | 62 (e-commerce) | 49 (logistica), 73 (marketing) |
 
-Logica deterministica baseada nos pilares dominantes:
+Novos mapeamentos granulares a adicionar:
+- `4221` (infraestrutura telecom) com upstream/downstream proprio
+- `9512` (manutencao equipamentos telecom)
+- `6911` (advocacia societaria)
+- `6499` (credito estruturado)
+- `21` (farmaceutica) com cadeia propria
+- `52` (armazenagem) ligada a logistica e agro
 
-```text
-SE revenue_synergy > 60 E isCrossSell:
-  "Cross-sell direto na base de clientes existente"
+### 2. Expansao do SECTOR_BOTTLENECK_MAP
 
-SE cost_synergy > 60 E sameCity:
-  "Reducao de estrutura duplicada na mesma praca"
+Adicionar resolucoes para setores faltantes:
 
-SE vertical_synergy > 60 E isUpstream:
-  "Internaliza fornecedor critico — reduz dependencia operacional"
+| Setor CNAE | Novas resolucoes |
+|---|---|
+| `01` (Agro) | 52 -> "Internaliza armazenagem", 49 -> "Controla logistica propria", 10 -> "Captura margem de beneficiamento" |
+| `10` (Alimentos) | 01 -> "Verticaliza materia-prima", 46 -> "Canal atacado direto", 49 -> "Reduz frete internalizando" |
+| `35` (Energia) | 43 -> "Internaliza instalacao", 26 -> "Verticaliza equipamentos", 73 -> "Reduz CAC" |
+| `70` (Gestao) | 62 -> "Plataforma digital propria", 69 -> "Amplia oferta contabil", 73 -> "Canal marketing integrado" |
+| `66` (Investimentos) | 62 -> "Plataforma digital", 69 -> "Back-office integrado", 73 -> "Canal de captacao" |
 
-SE vertical_synergy > 60 E isDownstream:
-  "Captura margem do canal de distribuicao"
+### 3. Refinamento da Ordenacao (Tier System)
 
-SE consolidation_synergy > 60 E sameCnae4:
-  "Consolidacao horizontal — dilui overhead e aumenta market share"
-
-SE strategic_synergy > 60 E estadoDiferente:
-  "Diversificacao geografica — reduz concentracao de receita"
-```
-
-Cada frase fica acessivel no resultado do match como `gain_insights: string[]`.
-
-### 2. Matriz de Gargalos por Setor
-
-Hoje os gargalos so ajustam pesos. O novo comportamento cruza gargalos declarados com o CNAE do seller para gerar insights especificos.
-
-**Nova constante `SECTOR_BOTTLENECK_MAP`:**
-
-```text
-{
-  "61" (Telecom/ISP): {
-    gargalos_tipicos: ["churn alto", "custo de instalacao", "capex elevado", "concorrencia regional"],
-    resolucoes: {
-      "80": "Reduz churn via cross-sell de CFTV/seguranca",
-      "43": "Reduz custo de instalacao internalizando equipe de campo",
-      "61": "Elimina concorrente direto na mesma regiao",
-      "35": "Cross-sell de energia solar na base existente",
-    }
-  },
-  "69" (Consultoria/BPO): {
-    gargalos_tipicos: ["concentracao de clientes", "dependencia de pessoas-chave", "ticket medio baixo"],
-    resolucoes: {
-      "62": "Automatiza entregas via software proprio — reduz dependencia de pessoas",
-      "69": "Aumenta base de clientes e dilui concentracao",
-      "73": "Canal de aquisicao proprio via marketing",
-      "85": "Gera autoridade e canal via educacao corporativa",
-    }
-  },
-  "62" (Software): {
-    gargalos_tipicos: ["custo de aquisicao alto", "churn", "escala limitada"],
-    resolucoes: {
-      "73": "Reduz CAC via canal de marketing integrado",
-      "85": "Canal de aquisicao via educacao/treinamento",
-      "62": "Consolida base de clientes e reduz concorrencia",
-      "63": "Monetiza dados como novo produto",
-    }
-  },
-  // ... mais setores
-}
-```
-
-Quando o buyer declara gargalos, o sistema cruza com o CNAE do seller e gera:
+Implementar um `tier_priority` no resultado do scoring que classifica cada match em 6 niveis de prioridade:
 
 ```text
-"Essa aquisicao resolve seu gargalo: reduz churn via cross-sell de CFTV/seguranca"
+Tier 1: Mesmo CNAE + mesma cidade               (consolidacao imediata)
+Tier 2: Mesmo CNAE + mesmo estado                (consolidacao regional)
+Tier 3: Upstream critico na mesma regiao          (verticalizacao)
+Tier 4: Downstream estrategico                   (captura de canal)
+Tier 5: Cross-sell / complementar                (receita incremental)
+Tier 6: Expansao geografica (outro estado)       (diversificacao)
 ```
 
-Isso fica no campo `bottleneck_resolution: string | null` do resultado.
+O tier sera usado como criterio de desempate quando o synergy_score for proximo (diferenca < 5 pontos).
 
-### 3. Consolidator Likelihood Score
+### 4. Consolidator Boost Universal
 
-**Novo campo no resultado:** `consolidator_score` (0-100) que indica se uma empresa ja esta estruturada para consolidar.
-
-**Como calcular (com dados disponiveis):**
-
-Os dados ja vem do banco nacional via `national-search`. Para calcular o consolidator score, precisamos de informacao adicional que pode ser obtida na mesma query ou em um passo separado.
-
-**Indicadores disponiveis nos dados atuais:**
-- Capital social alto vs media do setor → proxy de estrutura
-- Porte "05" (Demais) → empresa maior que micro/pequena
-- Nome fantasia vs razao social (empresas estruturadas costumam ter nome fantasia)
-
-**Indicadores que precisam de query adicional (fase 2):**
-- Contagem de estabelecimentos por cnpj_basico (filiais)
-- Presenca em mais de 1 UF
-- Idade da empresa (data de abertura)
-
-**Implementacao fase 1 (sem query adicional):**
+Aplicar bonus universal no score final quando a empresa target apresenta sinais de consolidacao ativa (dados ja disponiveis via Phase 2):
 
 ```text
-consolidator_score = 0
-
-SE porte = "05" (Demais): +30
-SE capital_social > media_setor * 2: +25
-SE capital_social > 1_000_000: +15
-SE tem nome_fantasia: +10
-SE mesmo CNAE do buyer: +20
+SE consolidator_score > 70: synergy_score final += 5
+SE consolidator_score > 85: synergy_score final += 10
 ```
 
-O score aparece como badge no card: "Potencial Consolidador" (score > 60).
-
-**Implementacao fase 2 (com query adicional na edge function):**
-
-Modificar `national-search` para incluir:
-- `COUNT(e2.cnpj_basico) as num_filiais` via subquery
-- `COUNT(DISTINCT e2.uf) as num_ufs` via subquery
-
-Isso permite:
-
-```text
-SE num_filiais > 3: +25
-SE num_ufs > 1: +20
-SE idade > 10 anos: +15
-```
+Isso garante que consolidadores naturais subam no ranking independente do setor.
 
 ### Mudancas tecnicas
 
 **Arquivo: `src/pages/Matching.tsx`**
 
-1. **Adicionar constante `SECTOR_BOTTLENECK_MAP`** (~20 linhas) apos `CNAE_VALUE_CHAIN`
+1. **Expandir `CNAE_VALUE_CHAIN`** (~linha 731): Adicionar ~20 novas entradas com upstream/downstream/cross_sell granulares para Agro, Industria, Saude, Educacao, Energia, Investimentos
 
-2. **Adicionar constante `GPI_RULES`** — array de regras {condition, insight} para gerar frases
+2. **Expandir `SECTOR_BOTTLENECK_MAP`** (~linha 757): Adicionar 5 novos setores (Agro 01, Alimentos 10, Energia 35, Gestao 70, Investimentos 66)
 
-3. **Expandir `scoreCompanyLocal()`:**
-   - Calcular `gain_insights: string[]` baseado nos pilares dominantes
-   - Calcular `bottleneck_resolution: string | null` cruzando gargalos do buyer com CNAE do seller
-   - Calcular `consolidator_score: number` baseado em capital/porte/nome fantasia
-   - Retornar esses 3 novos campos em `dimensions`
+3. **Adicionar `tier_priority`** no retorno de `scoreCompanyLocal()` (~linha 1050): Calculo determinístico baseado em CNAE match + proximidade geografica
 
-4. **Expandir interface `MatchDimensions`:**
-   - Adicionar `gain_insights: string[]`
-   - Adicionar `bottleneck_resolution: string | null`
-   - Adicionar `consolidator_score: number`
+4. **Adicionar Consolidator Boost** (~linha 996): Bonus no synergy_score quando consolidator_score > 70
 
-5. **Atualizar cards de resultado:**
-   - Mostrar `gain_insights` como lista de bullets abaixo das barras de sinergia
-   - Mostrar `bottleneck_resolution` com icone de alvo quando presente
-   - Mostrar badge "Potencial Consolidador" quando `consolidator_score > 60`
+5. **Atualizar ordenacao de resultados**: Usar synergy_score como primario e tier_priority como desempate
 
-6. **Atualizar expanded view:**
-   - Secao "Potencial de Geracao de Valor" com as frases do GPI
-   - Secao "Resolucao de Gargalos" quando aplicavel
-   - Barra de consolidator score
+6. **Expandir `MatchDimensions`**: Adicionar `tier_priority: number` e `tier_label: string`
 
-### UX do card atualizado
+7. **UI**: Mostrar o tier como badge sutil no card (ex: "Tier 1 - Consolidacao Local")
 
-```text
-PROVENET INTERNET LTDA                   Score: 82
-[Telecom] [Florianopolis, SC]
-[Verticalizacao] [Potencial Consolidador]
+### Impacto
 
-Sinergias:
-  Receita:        ████████░░░░  68
-  Custo:          ██████████░░  85
-  Verticalizacao: ████████████  92
-  Consolidacao:   ██████░░░░░░  55
-  Estrategica:    ████░░░░░░░░  40
-
-Potencial de valor:
-  * Internaliza fornecedor critico — reduz dependencia operacional
-  * Consolidacao horizontal — dilui overhead
-
-Resolve seu gargalo:
-  -> Reduz custo de instalacao internalizando equipe de campo
-
-[Shortlist] [Contatado] [Ignorar]           [IA]
-```
-
-### Fases
-
-**Fase 1 (esta implementacao):** GPI frases + Matriz gargalos + Consolidator score basico (sem query adicional)
-
-**Fase 2 (futura):** Consolidator score avancado com contagem de filiais e presenca multi-UF via modificacao na edge function `national-search`
-
-### Arquivos a modificar
-
-| Arquivo | Mudanca |
-|---|---|
-| `src/pages/Matching.tsx` | Adicionar constantes GPI_RULES, SECTOR_BOTTLENECK_MAP. Expandir scoreCompanyLocal(). Expandir MatchDimensions. Atualizar cards e expanded view. |
-
-Nenhum arquivo novo necessario. Nenhuma mudanca no backend nesta fase.
-
+- Zero mudancas no backend
+- Apenas `src/pages/Matching.tsx` sera modificado
+- Compatibilidade total com dados existentes do `national-search`
+- Melhora a qualidade do ranking sem adicionar latencia
