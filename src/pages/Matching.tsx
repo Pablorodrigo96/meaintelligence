@@ -80,6 +80,7 @@ interface MatchDimensions {
   gain_insights: string[];
   bottleneck_resolution: string | null;
   consolidator_score: number;
+  quality_score: number;
   tier_priority: number;
   tier_label: string;
 }
@@ -1104,7 +1105,7 @@ export default function Matching() {
     ];
     const synergy_type = pillars.reduce((a, b) => b.val > a.val ? b : a).key;
 
-    const compatibility_score = Math.min(100, Math.max(0, synergy_score));
+    const compatibility_score_legacy = Math.min(100, Math.max(0, synergy_score)); // kept for reference only
 
     // ── GPI: Gain Potential Index — frases de valor ──
     const gain_insights: string[] = [];
@@ -1160,7 +1161,32 @@ export default function Matching() {
     // ── CONSOLIDATOR BOOST — bonus universal no synergy_score ──
     if (consolidator_score > 85) synergy_score = Math.min(100, synergy_score + 10);
     else if (consolidator_score > 70) synergy_score = Math.min(100, synergy_score + 5);
-    const boosted_compatibility = Math.min(100, Math.max(0, synergy_score));
+
+    // ── QUALITY SCORE — qualidade empresarial (0-100) ──
+    let quality_score = 0;
+    if (targetCapital && targetCapital > 2_000_000) quality_score += 25;
+    else if (targetCapital && targetCapital > 500_000) quality_score += 15;
+    else if (targetCapital && targetCapital > 100_000) quality_score += 8;
+    if (targetCapital && targetCapital >= 100_000 && targetCapital <= 50_000_000) quality_score += 15;
+    const porteQ = company.porte || company.porte_empresa || company.size || null;
+    const porteStr = String(porteQ || "").trim();
+    if (porteStr === "05" || porteStr === "DEMAIS" || porteStr === "Medium" || porteStr === "Large" || porteStr === "Enterprise") quality_score += 15;
+    const nomeFantasiaQ = company.nome_fantasia || company.trade_name || null;
+    const razaoSocial = company.razao_social || company.name || "";
+    if (nomeFantasiaQ && nomeFantasiaQ.trim() !== "" && nomeFantasiaQ !== "0" && nomeFantasiaQ.toLowerCase() !== razaoSocial.toLowerCase()) quality_score += 10;
+    if (numFiliais > 5) quality_score += 25;
+    else if (numFiliais > 1) quality_score += 15;
+    if (numUfs > 1) quality_score += 10;
+    quality_score = Math.min(100, quality_score);
+    if ((!nomeFantasiaQ || nomeFantasiaQ.trim() === "" || nomeFantasiaQ === "0") && numFiliais <= 1) {
+      quality_score = Math.min(30, quality_score);
+    }
+    if (targetCapital && targetCapital < 10_000) {
+      quality_score = Math.min(10, quality_score);
+    }
+
+    // ── FINAL SCORE — sinergia (70%) + qualidade (30%) ──
+    const compatibility_score = Math.min(100, Math.max(0, Math.round(synergy_score * 0.7 + quality_score * 0.3)));
 
     // ── TIER PRIORITY SYSTEM ──
     let tier_priority = 6;
@@ -1175,7 +1201,7 @@ export default function Matching() {
     else if (targetState && company.state && company.state !== targetState) { tier_priority = 6; tier_label = "Expansão Geográfica"; }
 
     return {
-      compatibility_score: boosted_compatibility,
+      compatibility_score,
       dimensions: {
         sector_fit, size_fit, location_fit, financial_fit, risk_fit,
         revenue_synergy, cost_synergy, vertical_synergy, consolidation_synergy, strategic_synergy,
@@ -1183,6 +1209,7 @@ export default function Matching() {
         gain_insights: uniqueInsights,
         bottleneck_resolution,
         consolidator_score,
+        quality_score,
         tier_priority,
         tier_label,
       },
@@ -1963,12 +1990,18 @@ export default function Matching() {
                                        T{dimensions.tier_priority} · {dimensions.tier_label}
                                       </Badge>
                                    )}
+                                   {/* Quality badge */}
+                                   {dimensions?.quality_score != null && dimensions.quality_score > 65 && (
+                                     <Badge className="text-[10px] bg-success/15 text-success border-success/30 border">
+                                       <Star className="w-2.5 h-2.5 mr-0.5" />Empresa Estruturada
+                                     </Badge>
+                                   )}
                                    {/* Consolidator badge */}
                                   {dimensions?.consolidator_score != null && dimensions.consolidator_score > 60 && (
-                                    <Badge className="text-[10px] bg-warning/15 text-warning border-warning/30 border">
-                                      <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
-                                    </Badge>
-                                  )}
+                                     <Badge className="text-[10px] bg-warning/15 text-warning border-warning/30 border">
+                                       <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
+                                     </Badge>
+                                   )}
                                   {/* Capital Social badge */}
                                   {(() => {
                                     const capital = extractCapitalFromDescription(m.companies?.description ?? null);
