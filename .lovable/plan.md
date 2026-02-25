@@ -1,41 +1,48 @@
 
 
-## Plano: Corrigir exibição da Análise IA e Aprofundamento
+## Plano: Corrigir parsing da Análise IA (JSON bruto na tela)
 
-### Problema 1 — Análise IA exibe JSON bruto
+### Diagnóstico
 
-Na screenshot, a seção "Análise da IA" renderiza o JSON cru completo (com chaves, aspas, campos como `compatibility_score`, `dimensions`, etc.) em vez de exibir apenas o texto de análise.
+O problema persiste porque a IA retorna a resposta envolvida em code fences markdown (`` ```json ... ``` ``), e o código atual não remove essas fences. O fluxo é:
 
-**Causa raiz**: Em `Matching.tsx` linha 706, quando a IA retorna a resposta e `result.analysis` é um objeto (não uma string), ou quando `result.analysis` está ausente e `result` é o JSON inteiro, esse valor é salvo como `analysis` no banco. Depois, o `parseAnalysis` retorna esse objeto como string (via `JSON.stringify` implícito do React), exibindo o JSON bruto na tela.
+1. **Edge function `ai-analyze`** (tipo `match-single`): a IA retorna `` ```json\n{ "compatibility_score": 70, "analysis": "texto...", ... }\n``` ``
+2. **`ai-analyze` tenta extrair JSON** com regex `content.match(/\{[\s\S]*\}/)` — isso funciona e retorna o objeto parseado
+3. **Mas** `result.analysis` é a string `"texto..."` corretamente **apenas quando o parse funciona**. Quando o AI retorna o JSON inteiro como string dentro de `result` (ou quando `result` já é o JSON completo), o código em `analyzeOneCompany` (linha 707) faz `result.analysis || result` — e se `result` ainda contém o wrapper `` ```json `` como string, isso é salvo diretamente
+4. **Na leitura**: `parseAnalysis` faz `JSON.parse(raw)` do objeto `enriched`, obtém `parsed.analysis` = `` ```json\n{...}\n``` ``, passa para `extractAnalysisText`, que tenta `trim().startsWith("{")` — mas a string começa com `` ` `` (backtick), então o check falha e retorna o texto bruto com JSON
 
-**Correção**:
+### Alterações necessárias
 
-1. **`parseAnalysis`** (linhas 728-744) — Quando `parsed.analysis` for um objeto em vez de string, extrair o texto dele (se tiver campo `analysis` dentro) ou converter para string legível. Adicionar fallback robusto.
+**Arquivo: `src/pages/Matching.tsx`**
 
-2. **`analyzeOneCompany`** (linha 706) — Garantir que `analysis` sempre salva uma **string**, não um objeto. Se `result.analysis` for um objeto, extrair `result.analysis.analysis` ou fazer `typeof result.analysis === 'object' ? JSON.stringify(result.analysis) : result.analysis`.
+1. **Criar helper `stripCodeFences`**: Remove `` ```json `` e `` ``` `` do início/fim de qualquer string antes de processá-la. Isso resolve o problema na raiz.
 
-3. **Exibição** (linha 2347) — Adicionar verificação: se `analysis` parecer ser JSON bruto (começa com `{` ou `` ` ``), não exibir diretamente. Exibir uma mensagem de fallback ou tentar extrair campos relevantes para exibição formatada (analysis text, strengths, weaknesses separadamente).
+2. **Atualizar `extractAnalysisText`** (linha 737): Aplicar `stripCodeFences` no início, antes de checar se começa com `{`. Assim qualquer resposta da IA com code fences será limpa.
 
-### Problema 2 — Aprofundamento Top 10 (DeepDiveDialog)
+3. **Atualizar `analyzeOneCompany`** (linha 706): Ao salvar `analysis`, aplicar `stripCodeFences` na string antes de armazená-la. Se após limpar a string ela for um JSON válido com campo `analysis`, extrair apenas o texto.
 
-O dialog abre mas parece ficar travado ou sem resultados visíveis. Possíveis causas:
+4. **Atualizar `parseAnalysis`** (linha 767): Aplicar `stripCodeFences` no `raw` antes de `JSON.parse`, para que dados já salvos no banco com fences sejam corretamente parseados na leitura.
 
-1. **Empresas sem CNPJ** — Se nenhuma das top 10 tem CNPJ, o Deep Dive retorna resultados vazios (sem `intelligence`, sem `public_data`). O componente renderiza cards vazios.
+**Arquivo: `supabase/functions/ai-analyze/index.ts`**
 
-2. **Erro silencioso na edge function** — A chamada a `company-deep-dive` pode falhar (BrasilAPI timeout, rate limit) sem feedback adequado ao usuário.
+5. **Limpar fences no backend também** (defesa em profundidade): Após o regex `content.match(...)`, verificar se `content` contém `` ```json `` e removê-lo antes do match, garantindo que o backend nunca retorne dados com fences.
 
-**Correção**:
+### Helper proposto
 
-1. Adicionar estado de feedback ao usuário quando nenhuma empresa tem CNPJ — exibir mensagem clara: "Nenhuma empresa do Top 10 possui CNPJ cadastrado. Adicione CNPJs na página de Empresas para ativar o Motor de Inteligência."
+```typescript
+const stripCodeFences = (s: string): string => {
+  let t = s.trim();
+  // Remove ```json or ``` at start
+  t = t.replace(/^```(?:json)?\s*\n?/, '');
+  // Remove ``` at end
+  t = t.replace(/\n?```\s*$/, '');
+  return t.trim();
+};
+```
 
-2. Melhorar o loading state com progresso incremental (ex: "Processando empresa 3 de 10...").
+### Resultado esperado
 
-3. Se a `aiAnalysis` retornar markdown (com `**bold**`, `##` headers), renderizar com formatação adequada em vez de texto plano.
-
-### Resumo técnico das alterações
-
-| Arquivo | Alteração |
-|---|---|
-| `src/pages/Matching.tsx` | Corrigir `analyzeOneCompany` para garantir `analysis` é string. Corrigir `parseAnalysis` para lidar com objetos aninhados. Melhorar renderização da seção "Análise da IA" para formatar texto vs JSON. |
-| `src/components/DeepDiveDialog.tsx` | Adicionar estado vazio quando sem CNPJs. Renderizar `aiAnalysis` com suporte a markdown básico (bold, headers, listas). Melhorar feedback de progresso. |
+- A seção "Análise da IA" exibirá apenas o texto em português, sem JSON bruto
+- Strengths, weaknesses, recommendation e dimension_explanations serão extraídos corretamente e exibidos em seus respectivos cards
+- Dados já salvos no banco com fences serão corretamente parseados na leitura (fix retroativo)
 
