@@ -302,8 +302,6 @@ function FunnelCard({ stats, open, onToggle }: { stats: FunnelStats; open: boole
   );
 }
 
-
-
 export default function Matching() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -648,7 +646,7 @@ export default function Matching() {
               user_id: user!.id, name: company.name, cnpj: company.cnpj,
               sector: company.sector, state: company.state, city: company.city,
               size: company.size, revenue: company.revenue, description: company.description,
-              status: "active", risk_level: "medium",
+              status: "active", risk_level: "medium", source: "target_search" as any,
             }))
           ).select();
           (inserted || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; else cnpjToId[c.id] = c.id; });
@@ -880,7 +878,7 @@ export default function Matching() {
     toast({ title: "CSV exportado!", description: `${rows.length} resultados exportados.` });
   };
 
-
+  const stripCodeFences = (s: string): string => {
     let t = s.trim();
     t = t.replace(/^```(?:json|javascript|typescript)?\s*\n?/, '');
     t = t.replace(/\n?```\s*$/, '');
@@ -1203,7 +1201,7 @@ export default function Matching() {
             user_id: user!.id, name: company.name, cnpj: company.cnpj,
             sector: company.sector, state: company.state, city: company.city,
             size: company.size, revenue: company.revenue, description: company.description,
-            status: "active", risk_level: "medium",
+            status: "active", risk_level: "medium", source: "buyer_search" as any,
           }))
         ).select();
         (inserted || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; else cnpjToId[c.id] = c.id; });

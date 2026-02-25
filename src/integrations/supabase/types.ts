@@ -32,6 +32,7 @@ export type Database = {
           risk_level: string | null
           sector: string | null
           size: string | null
+          source: string | null
           state: string | null
           status: string | null
           updated_at: string
@@ -54,6 +55,7 @@ export type Database = {
           risk_level?: string | null
           sector?: string | null
           size?: string | null
+          source?: string | null
           state?: string | null
           status?: string | null
           updated_at?: string
@@ -76,6 +78,7 @@ export type Database = {
           risk_level?: string | null
           sector?: string | null
           size?: string | null
+          source?: string | null
           state?: string | null
           status?: string | null
           updated_at?: string
