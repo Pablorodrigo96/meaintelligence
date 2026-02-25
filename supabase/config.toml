@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.perplexity-validate]
 verify_jwt = false
+
+[functions.google-search-validate]
+verify_jwt = false
