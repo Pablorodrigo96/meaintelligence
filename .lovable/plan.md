@@ -1,60 +1,44 @@
 
 
-## Plano: Corrigir busca de compradores + adicionar mascaras de moeda
+## Plano: Corrigir erros de build no Matching.tsx
 
-### Problema 1: "A IA nao encontrou perfis de compradores"
+O arquivo `Matching.tsx` foi corrompido na última edição — caiu de 3.300+ linhas para 1.299 linhas, perdendo a maior parte do código funcional. Além disso, o código restante referencia estruturas que não existem no banco de dados.
 
-**Causa raiz identificada e confirmada por teste direto na edge function.**
+### Problemas identificados
 
-A IA retorna corretamente os perfis, mas o parsing no `ai-analyze/index.ts` (linha 405) destroi a estrutura:
+**1. Tabela `buyers` não existe no banco**
+- Linhas 387 e 500: `supabase.from("buyers")` — esta tabela nunca foi criada
+- O sistema original não usava uma tabela `buyers` separada; os perfis de compradores eram derivados dos critérios de busca (`match_criteria`) e dos dados do wizard
 
-```javascript
-// Linha 405 — regex tenta array PRIMEIRO
-const jsonMatch = stripped.match(/\[[\s\S]*\]/) || stripped.match(/\{[\s\S]*\}/);
-```
+**2. Colunas erradas na tabela `matches`**
+- O código usa `company_id`, `score`, `notes`, `user_id` — mas a tabela real tem `seller_company_id`, `compatibility_score`, sem `notes` nem `user_id`
+- Linha 415: tenta gravar `notes` que não existe
+- Linha 440: insere `company_id` e `score` em vez de `seller_company_id` e `compatibility_score`
 
-A IA retorna: `{"buyer_profiles": [...], "investment_thesis": "..."}`
+**3. DeepDiveDialog chamado com props erradas**
+- Linha 1296: passa `company` e `buyer` mas o componente espera `companies: any[]`
 
-O regex `\[[\s\S]*\]` encontra o array interno `[{...}, {...}]` ANTES de tentar o objeto completo. Resultado: `parsed` vira apenas o array, sem o wrapper. No frontend (linha 1032):
+**4. Arquivo truncado — perdeu ~2.000 linhas**
+- Todo o sistema de busca nacional, validação web, scoring, cards de resultado, busca reversa, formulários, analytics — tudo foi perdido
 
-```javascript
-const profiles: BuyerProfile[] = parsed.buyer_profiles || [];
-// parsed = [{...}, {...}] (array sem .buyer_profiles) → profiles = []
-```
+### Solução
 
-Profiles fica vazio, e a linha 1036 lanca o erro: "A IA nao encontrou perfis de compradores."
+A única solução viável é **reverter o `Matching.tsx` para a versão anterior funcional** (antes da última edição que o corrompeu) e depois aplicar cirurgicamente apenas as 3 correções planejadas:
 
-**Correcao**: No `ai-analyze/index.ts`, inverter a ordem do regex para tentar objeto PRIMEIRO:
+1. **Regex fix no `ai-analyze`** — já foi deployado com sucesso
+2. **Fallback de parsing** dos `buyer_profiles` — adicionar `Array.isArray(parsed) ? parsed : []`
+3. **Máscaras BRL** nos inputs financeiros — `formatBRL`/`parseBRL`
 
-```javascript
-const jsonMatch = stripped.match(/\{[\s\S]*\}/) || stripped.match(/\[[\s\S]*\]/);
-```
+### Ação necessária
 
-E no frontend, adicionar fallback para quando `result` ja for o array direto:
+Reverter `src/pages/Matching.tsx` para a versão imediatamente anterior (a de ~3.335 linhas que estava funcional), e depois aplicar as correções pontuais de máscara BRL e fallback de parsing.
 
-```javascript
-const parsed = aiData?.result || aiData;
-const profiles: BuyerProfile[] = parsed.buyer_profiles || (Array.isArray(parsed) ? parsed : []);
-```
+### Detalhes técnicos
 
-### Problema 2: Campos de moeda sem mascara
-
-Os inputs de Faturamento, EBITDA e Asking Price (linhas 1990, 1994, 1998) sao `type="number"` sem formatacao. O usuario digita "5000000" sem saber se sao reais, milhares ou milhoes.
-
-**Correcao**: Criar uma funcao `formatCurrencyInput` que formata o valor enquanto digita (ex: "5.000.000") e armazena o numero puro no estado. Usar `type="text"` com `inputMode="numeric"` em vez de `type="number"`.
-
-Aplicar nos 3 campos do formulario do vendedor (revenue, ebitda, asking_price) e tambem nos campos de faturamento do wizard de busca de alvos (min_revenue, max_revenue, min_ebitda, max_ebitda).
-
-### Problema 3: Build error TS1128
-
-O erro `Declaration or statement expected` na linha 3322 pode ser causado por caractere invisivel ou BOM. A correcao dos itens acima deve reescrever a area afetada e resolver.
-
-### Alteracoes por arquivo
-
-1. **`supabase/functions/ai-analyze/index.ts`** (linha 405): Inverter regex — objeto antes de array
-2. **`src/pages/Matching.tsx`**:
-   - Linha 1032: Fallback para array direto no parsing de profiles
-   - Linhas 1987-1999: Campos de moeda com mascara `R$ X.XXX.XXX`
-   - Campos equivalentes no wizard Step 1 (min_revenue, max_revenue, min_ebitda, max_ebitda)
-   - Helper `formatBRL(value)` / `parseBRL(formatted)` para converter entre display e valor numerico
+As queries do Supabase precisam usar os nomes corretos das colunas:
+- `seller_company_id` (não `company_id`)
+- `compatibility_score` (não `score`)
+- Sem `notes` na tabela `matches`
+- Sem tabela `buyers` — o sistema usa `match_criteria` + perfis gerados pela IA
+- `DeepDiveDialog` recebe `companies: any[]`, não `company` + `buyer`
 
