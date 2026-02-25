@@ -395,6 +395,7 @@ export type Database = {
           compatibility_score: number | null
           created_at: string
           id: string
+          match_type: string | null
           seller_company_id: string
           status: string
         }
@@ -404,6 +405,7 @@ export type Database = {
           compatibility_score?: number | null
           created_at?: string
           id?: string
+          match_type?: string | null
           seller_company_id: string
           status?: string
         }
@@ -413,6 +415,7 @@ export type Database = {
           compatibility_score?: number | null
           created_at?: string
           id?: string
+          match_type?: string | null
           seller_company_id?: string
           status?: string
         }
