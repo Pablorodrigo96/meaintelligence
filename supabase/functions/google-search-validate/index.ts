@@ -11,7 +11,6 @@ serve(async (req) => {
   try {
     const GOOGLE_CSE_API_KEY = Deno.env.get("GOOGLE_CSE_API_KEY");
     const GOOGLE_CSE_CX = Deno.env.get("GOOGLE_CSE_CX");
-    console.log(`DEBUG: CX value = "${GOOGLE_CSE_CX}", length = ${GOOGLE_CSE_CX?.length}`);
 
     if (!GOOGLE_CSE_API_KEY || !GOOGLE_CSE_CX) {
       return new Response(
