@@ -1,113 +1,140 @@
 
 
-## Top 10 Estrategico: Filtro de Qualidade Empresarial
+## Funil de 200 + Validação Perplexity Paralela
 
-### Problema atual
+### Conceito
 
-O motor retorna ate 2.000 empresas do banco nacional e seleciona as top 20 por synergy_score. Porem, o synergy_score mede **encaixe estrategico** (sinergia), nao **qualidade da empresa**. Resultado: empresas com score alto de sinergia mas sem estrutura (MEIs, informais, capital minimo) podem ocupar posicoes no top 10.
-
-### Solucao: Company Quality Score
-
-Criar um **quality_score** (0-100) que funciona como multiplicador do synergy_score, garantindo que empresas estruturadas e reconhecidas subam naturalmente no ranking.
-
-### Indicadores de qualidade (dados ja disponiveis)
-
-| Indicador | Sinal | Pontos |
-|---|---|---|
-| Capital social > R$500K | Empresa capitalizada | +15 |
-| Capital social > R$2M | Empresa bem capitalizada | +10 (adicional) |
-| Porte "05" (Demais) | Nao e micro/pequena | +15 |
-| Nome fantasia presente | Marca propria, reconhecida | +10 |
-| Num filiais > 1 | Empresa estruturada com equipe | +15 |
-| Num filiais > 5 | Rede consolidada | +10 (adicional) |
-| Presenca multi-UF (num_ufs > 1) | Escala regional/nacional | +10 |
-| Capital social entre R$100K e R$50M | Faixa ideal (exclui gigantes e informais) | +15 |
-
-O quality_score sera combinado com o synergy_score via formula ponderada:
+Concordo totalmente com a lógica. O fluxo fica:
 
 ```text
-final_score = synergy_score * 0.7 + quality_score * 0.3
+┌─────────────────────────────────────────────────────┐
+│  CAMADA 1: Base Nacional (custo zero de IA)         │
+│  national-search → 2000 empresas brutas             │
+│  scoring local → 200 empresas qualificadas          │
+│  Exibe todas 200 no funil (sem IA)                  │
+└─────────────┬───────────────────────────────────────┘
+              │ paralelo
+┌─────────────▼───────────────────────────────────────┐
+│  CAMADA 2: Perplexity Sonar (1 query por execução)  │
+│  "Top [setor] empresas em [estado/cidade]"          │
+│  Retorna ~10-20 nomes reais do mercado              │
+└─────────────┬───────────────────────────────────────┘
+              │ cruzamento
+┌─────────────▼───────────────────────────────────────┐
+│  CAMADA 3: Cross-reference & Boost                  │
+│  Empresa está na lista 200 E no Perplexity?         │
+│  → web_validated = true, quality_score += 15        │
+│  → Badge "Validada Google" com ícone Globe          │
+│  → Sobe naturalmente no ranking                     │
+└─────────────────────────────────────────────────────┘
 ```
 
-Isso garante que sinergia continua sendo o criterio principal (70%), mas qualidade empresarial influencia fortemente o ranking (30%).
+### Pré-requisito: Conectar Perplexity
 
-### Exclusao automatica de extremos
+O projeto não tem Perplexity configurado ainda. Será necessário conectar via conector nativo do Lovable antes de implementar.
 
-Alem do quality_score, adicionar filtros hard no scoring:
+### Mudanças técnicas
 
-- **Excluir empresas com capital social < R$10K** (informais/MEIs) -- ja existe via `min_capital_social: 10_000` mas reforcar no scoring
-- **Penalizar empresas sem nome fantasia E sem filiais** (quality_score capped em 30)
-- **O max_capital ja exclui gigantes** via `SECTOR_DEFAULT_MAX_CAPITAL` no backend
+#### 1. Edge Function: `perplexity-validate` (novo)
 
-### Mudancas tecnicas
+Nova edge function que recebe setor + estado/cidade e faz **1 query** ao Perplexity Sonar:
 
-**Arquivo: `src/pages/Matching.tsx`**
+- Prompt: `"Liste as principais empresas de [setor] em [estado]. Inclua nome fantasia, cidade e porte aproximado."`
+- Modelo: `sonar` (mais barato: ~$0.005/query)
+- Retorna: Array de nomes de empresas encontradas
+- Custo: ~R$0.80/dia para 100 consultas (~R$24/mês)
 
-1. **Novo calculo `quality_score`** dentro de `scoreCompanyLocal()`: Score 0-100 baseado nos indicadores acima
+#### 2. `src/pages/Matching.tsx` - Ampliar funil para 200
 
-2. **Nova formula de ranking**: `final_score = synergy_score * 0.7 + quality_score * 0.3` substitui `compatibility_score` como criterio de ordenacao
+**Linha 447**: Mudar `slice(0, 20)` para `slice(0, 200)`:
+```text
+const top = qualified.slice(0, 200);
+```
 
-3. **Expandir `MatchDimensions`**: Adicionar `quality_score: number`
+Salvar as 200 no banco (não apenas 20). O usuário vê todas as 200 na aba de resultados, paginadas ou com scroll.
 
-4. **Atualizar sorting** (~linha 436): Ordenar por `final_score` (combinado) ao inves de `compatibility_score` puro
+#### 3. `src/pages/Matching.tsx` - Chamada paralela ao Perplexity
 
-5. **UI nos cards**: Mostrar indicador visual de qualidade empresarial (ex: icone de estrela ou badge "Empresa Estruturada" quando quality_score > 65)
-
-6. **Manter `compatibility_score` visivel** como "Score de Sinergia" -- o `final_score` aparece como "Ranking Score" principal
-
-### Logica detalhada do quality_score
+Dentro de `runMatchMutation`, após o scoring local das 200, disparar em paralelo:
 
 ```text
-quality_score = 0
-
-// Capital social
-SE capital > 2_000_000: +25
-SENAO SE capital > 500_000: +15
-SENAO SE capital > 100_000: +8
-
-// Faixa ideal (nao e gigante nem informal)
-SE capital >= 100_000 E capital <= 50_000_000: +15
-
-// Porte
-SE porte == "05": +15
-
-// Marca
-SE nome_fantasia presente e diferente de razao social: +10
-
-// Estrutura operacional
-SE num_filiais > 5: +25
-SENAO SE num_filiais > 1: +15
-
-// Presenca geografica
-SE num_ufs > 1: +10
-
-Cap em 100.
+const [scored200, perplexityNames] = await Promise.all([
+  // scoring local (já existe)
+  scoringLocal(),
+  // Perplexity query (nova)
+  supabase.functions.invoke("perplexity-validate", {
+    body: { sector, state, city }
+  })
+]);
 ```
 
-### Impacto no ranking
+#### 4. Cross-reference: Boost por validação web
 
-Exemplo pratico com 3 empresas do setor Telecom:
+Após receber os nomes do Perplexity, fazer fuzzy match (normalização de texto: lowercase, remove acentos, remove "ltda/eireli/sa") contra os 200 nomes da base:
 
 ```text
-Empresa A: ISP regional, 3 filiais, capital R$1.5M, marca forte
-  synergy=72, quality=70, final=72*0.7+70*0.3 = 50.4+21.0 = 71
-
-Empresa B: MEI instalador, 1 filial, capital R$15K, sem marca
-  synergy=75, quality=23, final=75*0.7+23*0.3 = 52.5+6.9 = 59
-
-Empresa C: ISP estruturado, 8 filiais, 2 UFs, capital R$5M, marca
-  synergy=68, quality=90, final=68*0.7+90*0.3 = 47.6+27.0 = 75
+Para cada empresa nas 200:
+  SE nome_fantasia OU razao_social aparece nos resultados Perplexity:
+    quality_score += 15
+    web_validated = true
+    web_rank = posição no resultado Perplexity (1-20)
 ```
 
-Sem quality_score: B (75) > A (72) > C (68)
-Com quality_score: C (75) > A (71) > B (59)
+Empresas validadas sobem no ranking naturalmente pelo boost no quality_score (que já pesa 30% no final_score).
 
-A empresa C -- estruturada, multi-UF, capitalizada -- sobe para o topo mesmo com synergy um pouco menor.
+#### 5. UI: Badge "Validada Web" + indicador visual
 
-### Arquivos a modificar
+- Badge verde com ícone Globe: `"Validada Web"` para empresas com `web_validated = true`
+- Na lista de 200, as validadas ficam naturalmente no topo pelo score
+- Adicionar coluna/indicador de `web_rank` (posição no Google/Perplexity)
 
-| Arquivo | Mudanca |
+#### 6. UI: Paginação ou "Ver mais" para 200 empresas
+
+Como agora são 200 (não 20), adicionar:
+- Mostrar as primeiras 20 por padrão (como hoje)
+- Botão "Ver mais" que carrega mais 20 por vez
+- Ou filtro por `web_validated` para ver só as validadas
+
+#### 7. `MatchDimensions` - Expandir interface
+
+```text
+web_validated: boolean;
+web_rank: number | null;
+```
+
+### Fluxo do usuário
+
+1. Configura critérios normalmente (setor, estado, CNAE, etc.)
+2. Clica "Buscar na Base Nacional"
+3. Motor busca 2000 empresas, filtra/pontua 200 (custo zero)
+4. **Em paralelo**, Perplexity faz 1 busca semântica pelo setor+região
+5. Cross-reference: empresas que aparecem nos dois recebem boost
+6. Resultado: 200 empresas ordenadas, com as validadas web no topo
+7. Badge "Validada Web" indica presença digital confirmada
+
+### Custo mensal estimado
+
+| Componente | Custo/mês (100 queries/dia) |
 |---|---|
-| `src/pages/Matching.tsx` | Adicionar quality_score em scoreCompanyLocal(), nova formula final_score, atualizar sorting, expandir MatchDimensions, badge na UI |
+| Base Nacional (2000 empresas) | R$0 |
+| Scoring local (200 empresas) | R$0 |
+| Perplexity Sonar (1 query/execução) | ~R$24 |
+| **Total** | **~R$24/mês** |
 
-Zero mudancas no backend. Dados necessarios (capital, porte, nome_fantasia, num_filiais, num_ufs) ja vem do `national-search`.
+### Arquivos a criar/modificar
+
+| Arquivo | Ação |
+|---|---|
+| `supabase/functions/perplexity-validate/index.ts` | Criar - Edge function para query Perplexity |
+| `src/pages/Matching.tsx` | Modificar - Ampliar para 200, chamada paralela, cross-reference, UI badges, paginação |
+
+### Pré-requisito
+
+Antes de implementar, será necessário conectar o conector Perplexity do Lovable para disponibilizar a API key como variável de ambiente nas edge functions.
+
+### Notas técnicas
+
+- O fuzzy matching de nomes usa normalização simples (lowercase + remove sufixos empresariais) -- não precisa de lib externa
+- Se Perplexity falhar ou timeout, as 200 continuam funcionando normalmente sem boost (graceful degradation)
+- O `web_validated` é salvo no `ai_analysis` JSON do match, não precisa de nova coluna no banco
+
