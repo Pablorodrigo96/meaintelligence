@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.national-search]
 verify_jwt = false
+
+[functions.perplexity-validate]
+verify_jwt = false

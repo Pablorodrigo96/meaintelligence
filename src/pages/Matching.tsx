@@ -57,6 +57,17 @@ const investorProfiles = [
 
 const sectorLabel = (value: string | null) => sectors.find((s) => s.value === value)?.label || value || "—";
 
+function normalizeNameForMatch(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(ltda|eireli|s\.?a\.?|me|epp|ss|s\/s|s\/a|grupo|cia|companhia)\b/gi, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
   "hsl(var(--chart-2))",
@@ -83,6 +94,8 @@ interface MatchDimensions {
   quality_score: number;
   tier_priority: number;
   tier_label: string;
+  web_validated?: boolean;
+  web_rank?: number | null;
 }
 
 interface DimensionExplanations {
@@ -122,10 +135,12 @@ function calcCompleteness(c: { revenue?: number | null; ebitda?: number | null; 
 }
 
 const PROGRESS_STEPS = [
-  { label: "Buscando no banco nacional...", pct: 15 },
-  { label: "Aplicando filtros determinísticos...", pct: 40 },
-  { label: "Calculando scores de compatibilidade...", pct: 70 },
-  { label: "Salvando resultados...", pct: 90 },
+  { label: "Buscando no banco nacional...", pct: 10 },
+  { label: "Aplicando filtros determinísticos...", pct: 30 },
+  { label: "Calculando scores de compatibilidade...", pct: 50 },
+  { label: "Validando presença digital (Perplexity)...", pct: 70 },
+  { label: "Cruzando resultados web...", pct: 85 },
+  { label: "Salvando resultados...", pct: 95 },
 ];
 
 type SearchSource = "carteira" | "nacional";
@@ -225,6 +240,8 @@ export default function Matching() {
   const [feedbackLoading, setFeedbackLoading] = useState<Record<string, string>>({});
   // AI enrichment per individual match (on-demand)
   const [aiEnrichingMatch, setAiEnrichingMatch] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(20);
+  const [webFilterOnly, setWebFilterOnly] = useState(false);
 
   // Buyer revenue field (Wizard Step 1)
   const [buyerRevenueBrl, setBuyerRevenueBrl] = useState<string>("");
@@ -442,16 +459,83 @@ export default function Matching() {
         }
         return scoreDiff;
       });
-      // Filter by minimum score threshold, then take top 20
+      // Filter by minimum score threshold, then take top 200
       const qualified = scored.filter(s => s.compatibility_score >= 35);
-      const top = qualified.slice(0, 20);
+      const top = qualified.slice(0, 200);
       setFunnelStats(prev => prev
         ? { ...prev, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
         : { db_fetched: companiesToAnalyze.length, pre_filtered: scored.length, ai_analyzed: top.length, final_matches: 0 }
       );
 
-      // ── PERSIST RESULTS ────────────────────────────────────────────────
+      // ── PERPLEXITY WEB VALIDATION (paralela, graceful degradation) ──
       advanceProgress(4);
+      let webValidatedNames: { original: string; normalized: string; rank: number }[] = [];
+      try {
+        const sectorLabel = sectors.find(s => s.value === criteria.target_sector)?.label || criteria.target_sector || null;
+        const { data: perplexityData } = await supabase.functions.invoke("perplexity-validate", {
+          body: {
+            sector: sectorLabel || nlResult?.target_sector || "serviços",
+            state: criteria.target_state || null,
+            city: criteria.geo_reference_city || null,
+          },
+        });
+        if (perplexityData?.companies && Array.isArray(perplexityData.companies)) {
+          webValidatedNames = perplexityData.companies;
+        }
+      } catch (e) {
+        console.warn("Perplexity validation failed (graceful degradation):", e);
+      }
+
+      // ── CROSS-REFERENCE: boost companies found in both DB + Web ──
+      advanceProgress(5);
+      if (webValidatedNames.length > 0) {
+        for (const item of top) {
+          const companyName = item.company.name || "";
+          const companyRazao = item.company.razao_social || item.company.name || "";
+          const normalizedCompany = normalizeNameForMatch(companyName);
+          const normalizedRazao = normalizeNameForMatch(companyRazao);
+
+          for (const webEntry of webValidatedNames) {
+            const webNorm = webEntry.normalized;
+            // Fuzzy: check if either contains the other (handles partial matches)
+            if (
+              normalizedCompany.includes(webNorm) || webNorm.includes(normalizedCompany) ||
+              normalizedRazao.includes(webNorm) || webNorm.includes(normalizedRazao) ||
+              (normalizedCompany.length > 4 && webNorm.length > 4 && (
+                normalizedCompany.split(" ").some(w => w.length > 3 && webNorm.includes(w)) ||
+                webNorm.split(" ").some(w => w.length > 3 && normalizedCompany.includes(w))
+              ))
+            ) {
+              item.dimensions.web_validated = true;
+              item.dimensions.web_rank = webEntry.rank;
+              item.dimensions.quality_score = Math.min(100, item.dimensions.quality_score + 15);
+              // Recalculate final score with boosted quality
+              const synergyScore = Math.round(
+                item.dimensions.revenue_synergy * 0.7 +
+                item.dimensions.cost_synergy * 0.7 +
+                item.dimensions.vertical_synergy * 0.7 +
+                item.dimensions.consolidation_synergy * 0.7 +
+                item.dimensions.strategic_synergy * 0.7
+              ) / 5; // approximate weighted synergy
+              item.compatibility_score = Math.min(100, Math.max(0, Math.round(
+                item.compatibility_score * 0.85 + item.dimensions.quality_score * 0.15
+              )));
+              break;
+            }
+          }
+        }
+        // Re-sort after web validation boost
+        top.sort((a, b) => {
+          const scoreDiff = b.compatibility_score - a.compatibility_score;
+          if (Math.abs(scoreDiff) < 5) {
+            return (a.dimensions.tier_priority || 6) - (b.dimensions.tier_priority || 6);
+          }
+          return scoreDiff;
+        });
+      }
+
+      // ── PERSIST RESULTS ────────────────────────────────────────────────
+      advanceProgress(6);
       let savedCount = 0;
       for (const { company, compatibility_score, dimensions } of top) {
         if (searchSource === "nacional") {
@@ -497,7 +581,10 @@ export default function Matching() {
       queryClient.invalidateQueries({ queryKey: ["match_criteria"] });
       setActiveTab("results");
       setProgressStep(0);
-      toast({ title: "Matching completo!", description: `${count} empresas encontradas. Clique em "Ver análise IA ✦" para enriquecer individualmente.` });
+      setVisibleCount(20);
+      setWebFilterOnly(false);
+      const webCount = typeof count === "number" ? 0 : 0; // placeholder
+      toast({ title: "Matching completo!", description: `${count} empresas encontradas e salvas. Clique em "Ver análise IA ✦" para enriquecer individualmente.` });
     },
     onError: (e: any) => {
       setProgressStep(0);
@@ -610,8 +697,20 @@ export default function Matching() {
     let result = [...matches];
     if (statusFilter !== "all") result = result.filter((m) => m.status === statusFilter);
     result = result.filter((m) => Number(m.compatibility_score) >= minScoreFilter[0]);
+    if (webFilterOnly) {
+      result = result.filter((m) => {
+        try {
+          const parsed = JSON.parse(m.ai_analysis || "{}");
+          return parsed.dimensions?.web_validated === true;
+        } catch { return false; }
+      });
+    }
     return result;
-  }, [matches, statusFilter, minScoreFilter]);
+  }, [matches, statusFilter, minScoreFilter, webFilterOnly]);
+
+  const paginatedMatches = useMemo(() => {
+    return displayMatches.slice(0, visibleCount);
+  }, [displayMatches, visibleCount]);
 
   const scoreDistribution = useMemo(() => {
     const buckets = [
@@ -1212,6 +1311,8 @@ export default function Matching() {
         quality_score,
         tier_priority,
         tier_label,
+        web_validated: false,
+        web_rank: null,
       },
     };
   }
@@ -1935,12 +2036,22 @@ export default function Matching() {
                   <Label className="text-sm whitespace-nowrap">Min: {minScoreFilter[0]}%</Label>
                   <Slider value={minScoreFilter} onValueChange={setMinScoreFilter} max={100} step={5} className="flex-1" />
                 </div>
-                <p className="text-sm text-muted-foreground ml-auto">{displayMatches.length} resultados</p>
+                <Button
+                  variant={webFilterOnly ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1 text-xs"
+                  onClick={() => setWebFilterOnly(v => !v)}
+                >
+                  <Globe className="w-3 h-3" />Validadas Web
+                </Button>
+                <p className="text-sm text-muted-foreground ml-auto">
+                  {paginatedMatches.length} de {displayMatches.length} resultados
+                </p>
               </div>
 
               {/* Cards grid */}
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {displayMatches.map((m, idx) => {
+                {paginatedMatches.map((m, idx) => {
                    const parsedData = parseAnalysis(m.ai_analysis);
                    const { analysis, dimensions, dimension_explanations, recommendation, strengths, weaknesses, ai_enriched } = parsedData;
                    const isFromNational = (() => { try { return JSON.parse(m.ai_analysis || "{}").source === "national_db"; } catch { return false; } })();
@@ -2002,7 +2113,12 @@ export default function Matching() {
                                        <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
                                      </Badge>
                                    )}
-                                  {/* Capital Social badge */}
+                                   {/* Web Validated badge */}
+                                   {dimensions?.web_validated && (
+                                      <Badge className="text-[10px] bg-success/15 text-success border-success/30 border">
+                                        <Globe className="w-2.5 h-2.5 mr-0.5" />Validada Web{dimensions.web_rank ? ` #${dimensions.web_rank}` : ""}
+                                      </Badge>
+                                    )}
                                   {(() => {
                                     const capital = extractCapitalFromDescription(m.companies?.description ?? null);
                                     return capital ? (
@@ -2331,6 +2447,20 @@ export default function Matching() {
                   );
                 })}
               </div>
+
+              {/* Ver mais / pagination */}
+              {visibleCount < displayMatches.length && (
+                <div className="flex justify-center pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => setVisibleCount(prev => Math.min(prev + 20, displayMatches.length))}
+                    className="gap-2"
+                  >
+                    Ver mais ({displayMatches.length - visibleCount} restantes)
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </TabsContent>
