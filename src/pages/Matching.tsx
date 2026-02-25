@@ -703,7 +703,16 @@ export default function Matching() {
       // Update the match record with AI enrichment
       const enriched = {
         ...currentAnalysis,
-        analysis: result.analysis || result,
+        analysis: (() => {
+          const a = result.analysis || result;
+          if (typeof a === 'string') return a;
+          if (typeof a === 'object' && a !== null) {
+            // If the AI returned a nested object with its own 'analysis' string, extract it
+            if (typeof a.analysis === 'string') return a.analysis;
+            return JSON.stringify(a);
+          }
+          return String(a);
+        })(),
         dimensions: result.dimensions || currentAnalysis.dimensions,
         dimension_explanations: result.dimension_explanations || null,
         recommendation: result.recommendation || null,
@@ -725,12 +734,42 @@ export default function Matching() {
     }
   };
 
+  const extractAnalysisText = (val: unknown): string => {
+    if (!val) return "";
+    if (typeof val === "string") {
+      // If it looks like JSON, try to extract the text from it
+      const trimmed = val.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          const inner = JSON.parse(trimmed);
+          if (typeof inner === "object" && inner !== null) {
+            if (typeof inner.analysis === "string") return inner.analysis;
+            // Build readable text from known fields
+            const parts: string[] = [];
+            if (inner.recommendation) parts.push(inner.recommendation);
+            if (inner.strengths?.length) parts.push("Pontos fortes: " + inner.strengths.join(", "));
+            if (inner.weaknesses?.length) parts.push("Pontos fracos: " + inner.weaknesses.join(", "));
+            if (parts.length > 0) return parts.join("\n\n");
+          }
+          return typeof inner === "string" ? inner : "";
+        } catch { /* not JSON, return as-is */ }
+      }
+      return val;
+    }
+    if (typeof val === "object" && val !== null) {
+      const obj = val as Record<string, unknown>;
+      if (typeof obj.analysis === "string") return obj.analysis;
+      return "";
+    }
+    return String(val);
+  };
+
   const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean } => {
     if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
     try {
       const parsed = JSON.parse(raw);
       return {
-        analysis: parsed.analysis || "",
+        analysis: extractAnalysisText(parsed.analysis),
         dimensions: parsed.dimensions || null,
         dimension_explanations: parsed.dimension_explanations || null,
         recommendation: parsed.recommendation || "",
@@ -2344,7 +2383,20 @@ export default function Matching() {
                                <div className="space-y-4">
                                  <div>
                                   <h4 className="font-display font-semibold text-sm mb-2">Análise da IA</h4>
-                                  <p className="text-sm text-muted-foreground leading-relaxed">{analysis}</p>
+                                  {analysis ? (
+                                    <div className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                                      {analysis.split('\n').map((line, i) => {
+                                        // Basic markdown: **bold**, ## headers, - lists
+                                        let rendered = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                        if (line.startsWith('## ')) return <h5 key={i} className="font-semibold text-foreground mt-2 mb-1">{line.slice(3)}</h5>;
+                                        if (line.startsWith('# ')) return <h4 key={i} className="font-semibold text-foreground mt-2 mb-1">{line.slice(2)}</h4>;
+                                        if (line.startsWith('- ') || line.startsWith('• ')) return <li key={i} className="ml-4 list-disc">{line.slice(2)}</li>;
+                                        return <span key={i} dangerouslySetInnerHTML={{ __html: rendered }} />;
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground italic">Clique em "Ver análise IA ✦" para gerar a análise.</p>
+                                  )}
                                 </div>
                                 {recommendation && (
                                   <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">

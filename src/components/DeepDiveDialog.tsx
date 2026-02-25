@@ -131,15 +131,21 @@ function convergenceLabel(pct: number): { label: string; color: string } {
 export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialogProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [progressMsg, setProgressMsg] = useState("");
   const [results, setResults] = useState<DeepDiveResult[] | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+
+  const companiesWithCnpj = companies.filter((c) => c.cnpj);
+  const noCnpjAvailable = companiesWithCnpj.length === 0;
 
   const runDeepDive = async () => {
     setLoading(true);
     setResults(null);
     setAiAnalysis(null);
+    setProgressMsg("Preparando análise...");
     try {
       const top10 = companies.slice(0, 10);
+      setProgressMsg(`Processando ${top10.length} empresas (${companiesWithCnpj.length > 10 ? 10 : companiesWithCnpj.length} com CNPJ)...`);
       const { data, error } = await supabase.functions.invoke("company-deep-dive", {
         body: { companies: top10 },
       });
@@ -147,8 +153,10 @@ export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialog
       if (data.error) throw new Error(data.error);
       setResults(data.results || []);
       setAiAnalysis(data.ai_analysis || null);
+      setProgressMsg("");
     } catch (e: any) {
       toast({ title: "Erro no aprofundamento", description: e.message, variant: "destructive" });
+      setProgressMsg("");
     } finally {
       setLoading(false);
     }
@@ -171,12 +179,24 @@ export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialog
           </DialogTitle>
         </DialogHeader>
 
+        {/* No CNPJ warning */}
+        {!loading && !results && noCnpjAvailable && (
+          <div className="py-8 text-center space-y-4">
+            <AlertTriangle className="w-10 h-10 text-warning mx-auto" />
+            <p className="text-sm font-medium">Nenhuma empresa do Top 10 possui CNPJ cadastrado.</p>
+            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+              Adicione CNPJs na página de <span className="font-semibold">Empresas</span> para ativar o Motor de Inteligência com dados públicos reais (Capital Social, CNAE, QSA, etc.).
+            </p>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Fechar</Button>
+          </div>
+        )}
+
         {/* Loading State */}
         {loading && (
           <div className="space-y-4 py-8">
             <div className="text-center space-y-3">
               <Microscope className="w-10 h-10 text-primary mx-auto animate-pulse" />
-              <p className="text-sm font-medium">Processando 5 layers de inteligência...</p>
+              <p className="text-sm font-medium">{progressMsg || "Processando 5 layers de inteligência..."}</p>
               <p className="text-xs text-muted-foreground">CNPJ → Capital → CNAE → Maturidade → Massa Salarial → IA</p>
               <Progress value={undefined} className="h-1 animate-pulse max-w-xs mx-auto" />
             </div>
@@ -202,7 +222,16 @@ export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialog
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">{aiAnalysis}</p>
+                  <div className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">
+                    {aiAnalysis.split('\n').map((line, i) => {
+                      let rendered = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground">$1</strong>');
+                      if (line.startsWith('## ')) return <h5 key={i} className="font-semibold text-foreground mt-3 mb-1">{line.slice(3)}</h5>;
+                      if (line.startsWith('# ')) return <h4 key={i} className="font-bold text-foreground mt-3 mb-1 text-base">{line.slice(2)}</h4>;
+                      if (line.startsWith('- ') || line.startsWith('• ')) return <li key={i} className="ml-4 list-disc">{line.slice(2)}</li>;
+                      if (!line.trim()) return <br key={i} />;
+                      return <span key={i} dangerouslySetInnerHTML={{ __html: rendered }} />;
+                    })}
+                  </div>
                 </CardContent>
               </Card>
             )}
