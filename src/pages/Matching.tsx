@@ -68,6 +68,61 @@ function normalizeNameForMatch(name: string): string {
     .trim();
 }
 
+function levenshteinDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  // Ensure a is shorter for O(min(n,m)) space
+  if (a.length > b.length) [a, b] = [b, a];
+  let prev = Array.from({ length: a.length + 1 }, (_, i) => i);
+  for (let j = 1; j <= b.length; j++) {
+    const curr = [j];
+    for (let i = 1; i <= a.length; i++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[i] = Math.min(prev[i] + 1, curr[i - 1] + 1, prev[i - 1] + cost);
+    }
+    prev = curr;
+  }
+  return prev[a.length];
+}
+
+function levenshteinSimilarity(a: string, b: string): number {
+  if (a.length === 0 && b.length === 0) return 1;
+  const maxLen = Math.max(a.length, b.length);
+  return 1 - levenshteinDistance(a, b) / maxLen;
+}
+
+function bestMatchSimilarity(nameA: string, nameB: string): number {
+  // Full-string similarity
+  let best = levenshteinSimilarity(nameA, nameB);
+  // Token-based similarity for reordered names
+  const tokensA = nameA.split(" ").filter(t => t.length > 3);
+  const tokensB = nameB.split(" ").filter(t => t.length > 3);
+  if (tokensA.length > 0 && tokensB.length > 0) {
+    let totalSim = 0;
+    let matched = 0;
+    const usedB = new Set<number>();
+    for (const tA of tokensA) {
+      let bestTokenSim = 0;
+      let bestIdx = -1;
+      for (let i = 0; i < tokensB.length; i++) {
+        if (usedB.has(i)) continue;
+        const sim = levenshteinSimilarity(tA, tokensB[i]);
+        if (sim > bestTokenSim) { bestTokenSim = sim; bestIdx = i; }
+      }
+      if (bestIdx >= 0 && bestTokenSim > 0.5) {
+        usedB.add(bestIdx);
+        totalSim += bestTokenSim;
+        matched++;
+      }
+    }
+    if (matched > 0) {
+      const tokenScore = totalSim / Math.max(tokensA.length, tokensB.length);
+      best = Math.max(best, tokenScore);
+    }
+  }
+  return best;
+}
+
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
   "hsl(var(--chart-2))",
@@ -495,17 +550,14 @@ export default function Matching() {
           const normalizedCompany = normalizeNameForMatch(companyName);
           const normalizedRazao = normalizeNameForMatch(companyRazao);
 
+          const SIMILARITY_THRESHOLD = 0.65;
           for (const webEntry of webValidatedNames) {
             const webNorm = webEntry.normalized;
-            // Fuzzy: check if either contains the other (handles partial matches)
-            if (
-              normalizedCompany.includes(webNorm) || webNorm.includes(normalizedCompany) ||
-              normalizedRazao.includes(webNorm) || webNorm.includes(normalizedRazao) ||
-              (normalizedCompany.length > 4 && webNorm.length > 4 && (
-                normalizedCompany.split(" ").some(w => w.length > 3 && webNorm.includes(w)) ||
-                webNorm.split(" ").some(w => w.length > 3 && normalizedCompany.includes(w))
-              ))
-            ) {
+            const sim = Math.max(
+              bestMatchSimilarity(normalizedCompany, webNorm),
+              bestMatchSimilarity(normalizedRazao, webNorm)
+            );
+            if (sim >= SIMILARITY_THRESHOLD) {
               item.dimensions.web_validated = true;
               item.dimensions.web_rank = webEntry.rank;
               item.dimensions.quality_score = Math.min(100, item.dimensions.quality_score + 15);
