@@ -36,7 +36,26 @@ const sizes = [
   { value: "Enterprise", label: "Corporação (>R$5B)" },
 ];
 
+const sourceOptions = [
+  { value: "manual", label: "Manual", color: "bg-muted text-muted-foreground" },
+  { value: "target_search", label: "Busca Alvos", color: "bg-primary/10 text-primary" },
+  { value: "buyer_search", label: "Busca Compradores", color: "bg-accent/80 text-accent-foreground" },
+  { value: "enriched", label: "Enriquecida", color: "bg-secondary text-secondary-foreground" },
+];
+
 const sectorLabel = (value: string | null) => sectors.find((s) => s.value === value)?.label || value || "—";
+
+function sourceBadge(source: string | null) {
+  const s = sourceOptions.find((o) => o.value === (source || "manual")) || sourceOptions[0];
+  return <Badge className={s.color}>{s.label}</Badge>;
+}
+
+function formatCnpjDisplay(cnpj: string | null) {
+  if (!cnpj) return null;
+  const d = cnpj.replace(/\D/g, "");
+  if (d.length !== 14) return cnpj;
+  return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`;
+}
 
 function riskBadge(level: string | null) {
   const colors: Record<string, string> = { low: "bg-success/10 text-success", medium: "bg-warning/10 text-warning", high: "bg-destructive/10 text-destructive" };
@@ -69,6 +88,7 @@ export default function Companies() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [sectorFilter, setSectorFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyCompany);
@@ -135,10 +155,11 @@ export default function Companies() {
     },
   });
 
-  const filtered = companies.filter((c) => {
+  const filtered = companies.filter((c: any) => {
     const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || (c.sector || "").toLowerCase().includes(search.toLowerCase());
     const matchesSector = sectorFilter === "all" || c.sector === sectorFilter;
-    return matchesSearch && matchesSector;
+    const matchesSource = sourceFilter === "all" || (c.source || "manual") === sourceFilter;
+    return matchesSearch && matchesSector && matchesSource;
   });
 
   const openEdit = (c: typeof companies[number]) => {
@@ -166,7 +187,7 @@ export default function Companies() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-display font-bold text-foreground">Empresas</h1>
+          <h1 className="text-3xl font-display font-bold text-foreground">Empresas <Badge variant="secondary" className="ml-2 text-sm align-middle">{companies.length}</Badge></h1>
           <p className="text-muted-foreground mt-1">Gerencie perfis de empresas, dados financeiros e classificações de risco</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -259,6 +280,13 @@ export default function Companies() {
             {sectors.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={sourceFilter} onValueChange={setSourceFilter}>
+          <SelectTrigger className="w-48"><SelectValue placeholder="Todas as Origens" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas as Origens</SelectItem>
+            {sourceOptions.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {isLoading ? (
@@ -274,10 +302,14 @@ export default function Companies() {
                   <div className="p-2 rounded-lg bg-muted"><Building2 className="w-5 h-5 text-primary" /></div>
                   <div>
                     <CardTitle className="text-base font-display">{c.name}</CardTitle>
+                    {(c as any).cnpj && <p className="text-xs font-mono text-muted-foreground">{formatCnpjDisplay((c as any).cnpj)}</p>}
                     <p className="text-xs text-muted-foreground">{sectorLabel(c.sector)} · {c.location || `${c.city || ""}, ${c.state || ""}`}</p>
                   </div>
                 </div>
-                {riskBadge(c.risk_level)}
+                <div className="flex flex-col gap-1 items-end">
+                  {sourceBadge((c as any).source)}
+                  {riskBadge(c.risk_level)}
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-2 gap-2 text-sm">
