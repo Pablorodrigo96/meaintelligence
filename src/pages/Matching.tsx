@@ -704,14 +704,22 @@ export default function Matching() {
       const enriched = {
         ...currentAnalysis,
         analysis: (() => {
-          const a = result.analysis || result;
-          if (typeof a === 'string') return a;
-          if (typeof a === 'object' && a !== null) {
-            // If the AI returned a nested object with its own 'analysis' string, extract it
-            if (typeof a.analysis === 'string') return a.analysis;
-            return JSON.stringify(a);
+          const raw = result.analysis || result;
+          const strip = (s: string) => s.trim().replace(/^```(?:json|javascript|typescript)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+          if (typeof raw === 'string') {
+            const cleaned = strip(raw);
+            // If after stripping it's JSON with an analysis field, extract just the text
+            try {
+              const inner = JSON.parse(cleaned);
+              if (typeof inner === 'object' && inner !== null && typeof inner.analysis === 'string') return inner.analysis;
+            } catch { /* not JSON, use cleaned string */ }
+            return cleaned;
           }
-          return String(a);
+          if (typeof raw === 'object' && raw !== null) {
+            if (typeof (raw as any).analysis === 'string') return (raw as any).analysis;
+            return JSON.stringify(raw);
+          }
+          return String(raw);
         })(),
         dimensions: result.dimensions || currentAnalysis.dimensions,
         dimension_explanations: result.dimension_explanations || null,
@@ -734,11 +742,18 @@ export default function Matching() {
     }
   };
 
+  const stripCodeFences = (s: string): string => {
+    let t = s.trim();
+    t = t.replace(/^```(?:json|javascript|typescript)?\s*\n?/, '');
+    t = t.replace(/\n?```\s*$/, '');
+    return t.trim();
+  };
+
   const extractAnalysisText = (val: unknown): string => {
     if (!val) return "";
     if (typeof val === "string") {
-      // If it looks like JSON, try to extract the text from it
-      const trimmed = val.trim();
+      // Strip code fences first (AI often wraps in ```json ... ```)
+      const trimmed = stripCodeFences(val);
       if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
         try {
           const inner = JSON.parse(trimmed);
@@ -767,7 +782,8 @@ export default function Matching() {
   const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean } => {
     if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
     try {
-      const parsed = JSON.parse(raw);
+      const cleanedRaw = stripCodeFences(raw);
+      const parsed = JSON.parse(cleanedRaw);
       return {
         analysis: extractAnalysisText(parsed.analysis),
         dimensions: parsed.dimensions || null,
