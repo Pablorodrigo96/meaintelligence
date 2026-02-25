@@ -1,25 +1,20 @@
 
 
-## Resultado do Teste End-to-End
+## Diagnostico
 
-### O que foi verificado
+A backend function `google-search-validate` ainda usa a **chave antiga** armazenada no secret `GOOGLE_CSE_API_KEY`. A nova chave que voce criou (`AIzaSyAocbj9Lo6_Au_xq9IihYmI2H0u_guHeV0`) precisa ser atualizada no backend.
 
-1. **Navegação do wizard funciona**: Base Nacional selecionada, setor "Telecom" escolhido, filtro geográfico expandido para seleção de estado
-2. **Código da tripla validação está implementado**: `Promise.all` com Perplexity + Google CSE (linha 543 de Matching.tsx)
-3. **Badges implementados**: "Dupla Validação" (Shield, amber), "Validada Web" (Globe, verde), "Google" (Search, azul) - linhas 2193-2196
-4. **Filtros implementados**: Todas / Validadas / Dupla - linha 2119-2121
-5. **Edge function `google-search-validate` existe e está deployada**, mas **sem logs** - nunca foi chamada ainda
+O erro continua identico: `"This project does not have the access to Custom Search JSON API."` -- porque a function ainda le a chave antiga do secret.
 
-### Problema identificado
+## Plano
 
-A edge function `google-search-validate` **nunca foi executada** (0 logs). Isso significa que nenhuma busca completa na Base Nacional foi feita desde a implementação da tripla validação. Não é possível confirmar se os badges aparecem sem rodar uma busca real.
+1. **Atualizar o secret `GOOGLE_CSE_API_KEY`** com o novo valor `AIzaSyAocbj9Lo6_Au_xq9IihYmI2H0u_guHeV0`
+2. **Testar a function `google-search-validate`** com setor Telecom e estado RS
+3. **Confirmar que retorna empresas** em vez de erro 403
 
-### Próximo passo recomendado
+## Detalhes tecnicos
 
-Rodar uma busca completa diretamente na aplicação (Telecom + SC na Base Nacional) para validar que:
-- A edge function Google é chamada em paralelo com Perplexity
-- Os badges "Validada Web", "Google" e "Dupla Validação" aparecem nos resultados
-- O filtro Todas/Validadas/Dupla funciona corretamente
-
-Isso requer interação manual na aplicação (wizard de 3 passos + aguardar processamento). A implementação do código está completa e correta conforme revisão.
+- O secret `GOOGLE_CSE_API_KEY` ja existe no backend e sera sobrescrito com o novo valor
+- Nenhuma alteracao de codigo e necessaria -- apenas a atualizacao do secret
+- Apos a atualizacao, a function usara automaticamente a nova chave na proxima chamada
 
