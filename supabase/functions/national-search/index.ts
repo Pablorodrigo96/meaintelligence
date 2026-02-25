@@ -131,8 +131,11 @@ serve(async (req) => {
     // CNAE filter: specific prefixes take priority over broad sector filter
     if (cnae_prefixes && Array.isArray(cnae_prefixes) && cnae_prefixes.length > 0) {
       // Precise sub-sector filter (e.g. ["69","70"] for financial consulting, excludes banks)
-      const cnaeLikes = cnae_prefixes.map((p: string) => `e.cnae_fiscal_principal LIKE '${p}%'`).join(" OR ");
-      conditions.push(`(${cnaeLikes})`);
+      const cnaeConditions = cnae_prefixes.map((p: string) => {
+        params.push(p);
+        return `LEFT(e.cnae_fiscal_principal, ${p.length}) = $${params.length}`;
+      }).join(" OR ");
+      conditions.push(`(${cnaeConditions})`);
     } else if (target_sector) {
       // Fallback: broad sector filter from CNAE map
       const matchingPrefixes = Object.entries(CNAE_SECTOR_MAP)
@@ -140,8 +143,11 @@ serve(async (req) => {
         .map(([prefix]) => prefix);
 
       if (matchingPrefixes.length > 0) {
-        const cnaeLikes = matchingPrefixes.map((prefix) => `e.cnae_fiscal_principal LIKE '${prefix}%'`).join(" OR ");
-        conditions.push(`(${cnaeLikes})`);
+        const cnaeConditions = matchingPrefixes.map((prefix) => {
+          params.push(prefix);
+          return `LEFT(e.cnae_fiscal_principal, ${prefix.length}) = $${params.length}`;
+        }).join(" OR ");
+        conditions.push(`(${cnaeConditions})`);
       }
     }
 

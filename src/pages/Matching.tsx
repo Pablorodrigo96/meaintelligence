@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2, Mail, ExternalLink, Instagram, Linkedin, MapPinned, Users, ArrowLeftRight } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2, Mail, ExternalLink, Instagram, Linkedin, MapPinned, Users, ArrowLeftRight, Download } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
@@ -533,7 +533,7 @@ export default function Matching() {
         geo_longitude: refCityData?.lng ?? null,
       };
       await supabase.from("match_criteria").insert(saveCriteria);
-      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
+      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new").eq("match_type", "target_search");
 
       // ── SCORING DETERMINÍSTICO LOCAL (zero chamadas de IA) ─────────────
       advanceProgress(3);
@@ -617,43 +617,52 @@ export default function Matching() {
         return scoreDiff;
       });
 
-      // ── PERSIST RESULTS ────────────────────────────────────────────────
+      // ── PERSIST RESULTS (batch upsert by CNPJ) ────────────────────────
       advanceProgress(6);
       let savedCount = 0;
-      for (const { company, compatibility_score, dimensions } of top) {
-        if (searchSource === "nacional") {
-          const { data: savedCompany } = await supabase.from("companies").insert({
-            user_id: user!.id,
-            name: company.name,
-            cnpj: company.cnpj,
-            sector: company.sector,
-            state: company.state,
-            city: company.city,
-            size: company.size,
-            revenue: company.revenue,
-            description: company.description,
-            status: "active",
-            risk_level: "medium",
-          }).select().single();
-          if (savedCompany) {
-            await supabase.from("matches").insert({
-              buyer_id: user!.id,
-              seller_company_id: savedCompany.id,
-              compatibility_score,
-              ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], source: "national_db", ai_enriched: false }),
-              status: "new",
-            });
-            savedCount++;
-          }
-        } else {
-          await supabase.from("matches").insert({
-            buyer_id: user!.id,
-            seller_company_id: company.id,
-            compatibility_score,
-            ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], ai_enriched: false }),
-            status: "new",
-          });
-          savedCount++;
+      if (searchSource === "nacional") {
+        // Batch: check existing companies by CNPJ, reuse IDs
+        const cnpjs = top.map(t => t.company.cnpj).filter(Boolean);
+        const { data: existingCompanies } = cnpjs.length > 0
+          ? await supabase.from("companies").select("id, cnpj").eq("user_id", user!.id).in("cnpj", cnpjs)
+          : { data: [] };
+        const cnpjToId: Record<string, string> = {};
+        (existingCompanies || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; });
+
+        const newCompanies = top.filter(t => !t.company.cnpj || !cnpjToId[t.company.cnpj]);
+        if (newCompanies.length > 0) {
+          const { data: inserted } = await supabase.from("companies").insert(
+            newCompanies.map(({ company }) => ({
+              user_id: user!.id, name: company.name, cnpj: company.cnpj,
+              sector: company.sector, state: company.state, city: company.city,
+              size: company.size, revenue: company.revenue, description: company.description,
+              status: "active", risk_level: "medium",
+            }))
+          ).select();
+          (inserted || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; else cnpjToId[c.id] = c.id; });
+        }
+
+        const matchRows = top.map(({ company, compatibility_score, dimensions }) => {
+          const companyId = (company.cnpj && cnpjToId[company.cnpj]) || cnpjToId[company.id] || company.id;
+          return {
+            buyer_id: user!.id, seller_company_id: companyId, compatibility_score,
+            ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], source: "national_db", ai_enriched: false }),
+            status: "new", match_type: "target_search",
+          };
+        }).filter(r => r.seller_company_id);
+        if (matchRows.length > 0) {
+          await supabase.from("matches").insert(matchRows);
+          savedCount = matchRows.length;
+        }
+      } else {
+        const matchRows = top.map(({ company, compatibility_score, dimensions }) => ({
+          buyer_id: user!.id, seller_company_id: company.id, compatibility_score,
+          ai_analysis: JSON.stringify({ analysis: null, dimensions, dimension_explanations: null, recommendation: null, strengths: [], weaknesses: [], ai_enriched: false }),
+          status: "new", match_type: "target_search",
+        }));
+        if (matchRows.length > 0) {
+          await supabase.from("matches").insert(matchRows);
+          savedCount = matchRows.length;
         }
       }
       setFunnelStats(prev => prev ? { ...prev, final_matches: savedCount } : null);
@@ -805,7 +814,61 @@ export default function Matching() {
     }
   };
 
-  const stripCodeFences = (s: string): string => {
+  // Batch enrich top N companies with throttle
+  const [batchEnriching, setBatchEnriching] = useState(false);
+  const batchEnrichTop = async (count = 10) => {
+    setBatchEnriching(true);
+    const toEnrich = displayMatches
+      .filter(m => {
+        try { const p = JSON.parse(m.ai_analysis || "{}"); return !p.contact_info; } catch { return true; }
+      })
+      .slice(0, count);
+    let done = 0;
+    const CONCURRENCY = 2;
+    for (let i = 0; i < toEnrich.length; i += CONCURRENCY) {
+      const batch = toEnrich.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(batch.map(m => enrichOneCompany(m)));
+      done += batch.length;
+      toast({ title: `Enriquecendo...`, description: `${done}/${toEnrich.length} concluídas` });
+    }
+    setBatchEnriching(false);
+    toast({ title: "Enriquecimento em lote concluído!", description: `${done} empresas enriquecidas.` });
+  };
+
+  // Export matches to CSV
+  const exportToCsv = () => {
+    const rows = displayMatches.map(m => {
+      const contactInfo = (() => { try { return JSON.parse(m.ai_analysis || "{}").contact_info || null; } catch { return null; } })();
+      const dims = (() => { try { return JSON.parse(m.ai_analysis || "{}").dimensions || {}; } catch { return {}; } })();
+      return {
+        Nome: m.companies?.name || "",
+        CNPJ: m.companies?.cnpj || "",
+        Setor: sectorLabel(m.companies?.sector || null),
+        Score: m.compatibility_score || 0,
+        Sinergia: dims.synergy_type || "",
+        Estado: m.companies?.state || "",
+        Cidade: m.companies?.city || "",
+        Telefone: contactInfo?.phones?.join("; ") || "",
+        Email: contactInfo?.emails?.join("; ") || "",
+        Status: m.status || "",
+      };
+    });
+    const headers = Object.keys(rows[0] || {});
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(r => headers.map(h => `"${String((r as any)[h]).replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `matching-results-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "CSV exportado!", description: `${rows.length} resultados exportados.` });
+  };
+
+
     let t = s.trim();
     t = t.replace(/^```(?:json|javascript|typescript)?\s*\n?/, '');
     t = t.replace(/\n?```\s*$/, '');
@@ -1046,7 +1109,9 @@ export default function Matching() {
         // Size Fit: buyer should be >= seller
         const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
         const buyerSizeIdx = sizeOrder.indexOf(buyer.size || "Small");
-        const sellerSizeIdx = sizeOrder.indexOf(sellerData.sector ? "Small" : "Small"); // infer from revenue
+        const sellerRevenue = Number(sellerData.revenue) || 0;
+        const sellerSize = sellerRevenue > 100_000_000 ? "Enterprise" : sellerRevenue > 10_000_000 ? "Large" : sellerRevenue > 1_000_000 ? "Medium" : sellerRevenue > 100_000 ? "Small" : "Startup";
+        const sellerSizeIdx = sizeOrder.indexOf(sellerSize);
         let size_fit = 60;
         if (buyerSizeIdx > sellerSizeIdx) size_fit = 90;
         else if (buyerSizeIdx === sellerSizeIdx) size_fit = 70;
@@ -1108,52 +1173,53 @@ export default function Matching() {
       scored.sort((a, b) => b.compatibility_score - a.compatibility_score);
       const top = scored.slice(0, 200);
 
-      // Step 4: Save results
+      // Step 4: Save results (batch upsert by CNPJ)
       setProgressStep(5);
-      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
+      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new").eq("match_type", "buyer_search");
 
+      const cnpjs = top.map(t => t.company.cnpj).filter(Boolean);
+      const { data: existingCompanies } = cnpjs.length > 0
+        ? await supabase.from("companies").select("id, cnpj").eq("user_id", user!.id).in("cnpj", cnpjs)
+        : { data: [] };
+      const cnpjToId: Record<string, string> = {};
+      (existingCompanies || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; });
+
+      const newCompanies = top.filter(t => !t.company.cnpj || !cnpjToId[t.company.cnpj]);
+      if (newCompanies.length > 0) {
+        const { data: inserted } = await supabase.from("companies").insert(
+          newCompanies.map(({ company }) => ({
+            user_id: user!.id, name: company.name, cnpj: company.cnpj,
+            sector: company.sector, state: company.state, city: company.city,
+            size: company.size, revenue: company.revenue, description: company.description,
+            status: "active", risk_level: "medium",
+          }))
+        ).select();
+        (inserted || []).forEach((c: any) => { if (c.cnpj) cnpjToId[c.cnpj] = c.id; else cnpjToId[c.id] = c.id; });
+      }
+
+      const matchRows = top.map(({ company, compatibility_score, dimensions }) => {
+        const companyId = (company.cnpj && cnpjToId[company.cnpj]) || cnpjToId[company.id] || company.id;
+        return {
+          buyer_id: user!.id, seller_company_id: companyId, compatibility_score,
+          ai_analysis: JSON.stringify({
+            analysis: `${dimensions.synergy_type}: ${company._buyer_motivation || "Comprador potencial identificado pela busca reversa"}`,
+            dimensions, dimension_explanations: {
+              financial_fit: `Capacidade financeira: capital social ${company.revenue ? `estimado R$${(company.revenue / 2 / 1e6).toFixed(1)}M` : "N/A"} vs asking price R$${(Number(sellerData.asking_price) / 1e6).toFixed(1)}M`,
+              sector_fit: `Sinergia setorial: ${dimensions.synergy_type}`, size_fit: `Porte: ${company.size || "N/A"}`,
+              location_fit: `Localização: ${company.city || ""}, ${company.state || ""}`, risk_fit: "Risco padrão",
+            },
+            recommendation: company._buyer_motivation || "",
+            strengths: [dimensions.synergy_type, company._buyer_label || "Comprador potencial"],
+            weaknesses: [], source: "reverse_matching", ai_enriched: false,
+            buyer_strategy: company._buyer_strategy, buyer_label: company._buyer_label,
+          }),
+          status: "new", match_type: "buyer_search",
+        };
+      }).filter(r => r.seller_company_id);
       let savedCount = 0;
-      for (const { company, compatibility_score, dimensions } of top) {
-        const { data: savedCompany } = await supabase.from("companies").insert({
-          user_id: user!.id,
-          name: company.name,
-          cnpj: company.cnpj,
-          sector: company.sector,
-          state: company.state,
-          city: company.city,
-          size: company.size,
-          revenue: company.revenue,
-          description: company.description,
-          status: "active",
-          risk_level: "medium",
-        }).select().single();
-        if (savedCompany) {
-          await supabase.from("matches").insert({
-            buyer_id: user!.id,
-            seller_company_id: savedCompany.id,
-            compatibility_score,
-            ai_analysis: JSON.stringify({
-              analysis: `${dimensions.synergy_type}: ${company._buyer_motivation || "Comprador potencial identificado pela busca reversa"}`,
-              dimensions,
-              dimension_explanations: {
-                financial_fit: `Capacidade financeira: capital social ${company.revenue ? `estimado R$${(company.revenue / 2 / 1e6).toFixed(1)}M` : "N/A"} vs asking price R$${(Number(sellerData.asking_price) / 1e6).toFixed(1)}M`,
-                sector_fit: `Sinergia setorial: ${dimensions.synergy_type}`,
-                size_fit: `Porte: ${company.size || "N/A"}`,
-                location_fit: `Localização: ${company.city || ""}, ${company.state || ""}`,
-                risk_fit: "Risco padrão",
-              },
-              recommendation: company._buyer_motivation || "",
-              strengths: [dimensions.synergy_type, company._buyer_label || "Comprador potencial"],
-              weaknesses: [],
-              source: "reverse_matching",
-              ai_enriched: false,
-              buyer_strategy: company._buyer_strategy,
-              buyer_label: company._buyer_label,
-            }),
-            status: "new",
-          });
-          savedCount++;
-        }
+      if (matchRows.length > 0) {
+        await supabase.from("matches").insert(matchRows);
+        savedCount = matchRows.length;
       }
 
       setFunnelStats({
@@ -2608,6 +2674,18 @@ export default function Matching() {
                   open={deepDiveOpen}
                   onOpenChange={setDeepDiveOpen}
                 />
+                <Button onClick={exportToCsv} variant="outline" className="gap-1 text-xs md:text-sm md:gap-2">
+                  <Download className="w-4 h-4" />Exportar CSV
+                </Button>
+                <Button
+                  onClick={() => batchEnrichTop(10)}
+                  variant="outline"
+                  disabled={batchEnriching}
+                  className="border-primary/30 hover:bg-primary/5 gap-1 text-xs md:text-sm md:gap-2"
+                >
+                  {batchEnriching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  Enriquecer Top 10
+                </Button>
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">Status:</Label>
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
