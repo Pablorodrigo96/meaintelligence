@@ -57,6 +57,18 @@ const investorProfiles = [
 
 const sectorLabel = (value: string | null) => sectors.find((s) => s.value === value)?.label || value || "—";
 
+function formatBRL(value: string | number): string {
+  const num = typeof value === "string" ? Number(value.replace(/\D/g, "")) : value;
+  if (!num && num !== 0) return "";
+  return num.toLocaleString("pt-BR");
+}
+function parseBRL(formatted: string): string {
+  return formatted.replace(/\./g, "").replace(/,/g, "").replace(/\D/g, "");
+}
+function handleCurrencyChange(formatted: string, setter: (val: string) => void) {
+  setter(parseBRL(formatted));
+}
+
 function normalizeNameForMatch(name: string): string {
   return name
     .toLowerCase()
@@ -1029,7 +1041,7 @@ export default function Matching() {
       if (aiData?.error) throw new Error(aiData.error);
 
       const parsed = aiData?.result || aiData;
-      const profiles: BuyerProfile[] = parsed.buyer_profiles || [];
+      const profiles: BuyerProfile[] = parsed.buyer_profiles || (Array.isArray(parsed) ? parsed : []);
       setBuyerProfiles(profiles);
       setInvestmentThesis(parsed.investment_thesis || "");
 
@@ -1987,15 +1999,15 @@ export default function Matching() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5 text-muted-foreground" />Faturamento anual (R$)</Label>
-                      <Input type="number" value={sellerData.revenue} onChange={(e) => setSellerData(prev => ({ ...prev, revenue: e.target.value }))} placeholder="Ex: 5000000" />
+                      <Input inputMode="numeric" value={sellerData.revenue ? formatBRL(sellerData.revenue) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setSellerData(prev => ({ ...prev, revenue: v })))} placeholder="Ex: 5.000.000" />
                     </div>
                     <div className="space-y-2">
                       <Label className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />Lucro / EBITDA (R$)</Label>
-                      <Input type="number" value={sellerData.ebitda} onChange={(e) => setSellerData(prev => ({ ...prev, ebitda: e.target.value }))} placeholder="Ex: 1800000" />
+                      <Input inputMode="numeric" value={sellerData.ebitda ? formatBRL(sellerData.ebitda) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setSellerData(prev => ({ ...prev, ebitda: v })))} placeholder="Ex: 1.800.000" />
                     </div>
                     <div className="space-y-2">
                       <Label className="flex items-center gap-1"><Trophy className="w-3.5 h-3.5 text-muted-foreground" />Asking Price (R$)</Label>
-                      <Input type="number" value={sellerData.asking_price} onChange={(e) => setSellerData(prev => ({ ...prev, asking_price: e.target.value }))} placeholder="Ex: 3000000" />
+                      <Input inputMode="numeric" value={sellerData.asking_price ? formatBRL(sellerData.asking_price) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setSellerData(prev => ({ ...prev, asking_price: v })))} placeholder="Ex: 3.000.000" />
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -2383,19 +2395,19 @@ export default function Matching() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>Receita Mín. (R$)</Label>
-                          <Input type="number" value={criteria.min_revenue} onChange={(e) => setCriteria({ ...criteria, min_revenue: e.target.value })} placeholder="0" />
+                          <Input inputMode="numeric" value={criteria.min_revenue ? formatBRL(criteria.min_revenue) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setCriteria({ ...criteria, min_revenue: v }))} placeholder="0" />
                         </div>
                         <div className="space-y-2">
                           <Label>Receita Máx. (R$)</Label>
-                          <Input type="number" value={criteria.max_revenue} onChange={(e) => setCriteria({ ...criteria, max_revenue: e.target.value })} placeholder="Sem limite" />
+                          <Input inputMode="numeric" value={criteria.max_revenue ? formatBRL(criteria.max_revenue) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setCriteria({ ...criteria, max_revenue: v }))} placeholder="Sem limite" />
                         </div>
                         <div className="space-y-2">
                           <Label>EBITDA Mín. (R$)</Label>
-                          <Input type="number" value={criteria.min_ebitda} onChange={(e) => setCriteria({ ...criteria, min_ebitda: e.target.value })} placeholder="0" />
+                          <Input inputMode="numeric" value={criteria.min_ebitda ? formatBRL(criteria.min_ebitda) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setCriteria({ ...criteria, min_ebitda: v }))} placeholder="0" />
                         </div>
                         <div className="space-y-2">
                           <Label>EBITDA Máx. (R$)</Label>
-                          <Input type="number" value={criteria.max_ebitda} onChange={(e) => setCriteria({ ...criteria, max_ebitda: e.target.value })} placeholder="Sem limite" />
+                          <Input inputMode="numeric" value={criteria.max_ebitda ? formatBRL(criteria.max_ebitda) : ""} onChange={(e) => handleCurrencyChange(e.target.value, (v) => setCriteria({ ...criteria, max_ebitda: v }))} placeholder="Sem limite" />
                         </div>
                       </div>
                     </CardContent>
@@ -3320,3 +3332,4 @@ export default function Matching() {
     </div>
   );
 }
+
