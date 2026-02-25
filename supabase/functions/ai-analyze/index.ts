@@ -353,8 +353,13 @@ Retorne JSON com este formato exato:
 
     let parsed;
     try {
-      const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : content;
+      // Strip code fences (```json ... ```) before extracting JSON
+      const stripped = content.trim()
+        .replace(/^```(?:json|javascript|typescript)?\s*\n?/, '')
+        .replace(/\n?```\s*$/, '')
+        .trim();
+      const jsonMatch = stripped.match(/\[[\s\S]*\]/) || stripped.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : stripped;
     } catch {
       parsed = content;
     }
