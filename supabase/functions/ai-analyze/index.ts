@@ -307,6 +307,50 @@ Retorne JSON com este formato exato:
         break;
       }
 
+      case "parse-seller-intent": {
+        const seller = data.seller || {};
+        systemPrompt = `Você é um especialista em M&A brasileiro. O usuário possui uma EMPRESA À VENDA e precisa encontrar COMPRADORES potenciais.
+Sua tarefa é analisar os dados do vendedor e retornar perfis de compradores ideais com CNAEs para busca.
+
+Considere 3 estratégias de busca:
+1. CONSOLIDAÇÃO HORIZONTAL — Concorrentes maiores do mesmo setor que querem aumentar market share
+2. INTEGRAÇÃO VERTICAL — Empresas na cadeia de valor (fornecedores ou clientes) que querem internalizar
+3. DIVERSIFICAÇÃO — Empresas de setores adjacentes ou fundos que querem entrar no setor
+
+Para cada perfil, forneça CNAEs específicos (2 ou 4 dígitos) para busca na base de dados da Receita Federal.
+
+Retorne SOMENTE JSON válido, sem markdown.`;
+
+        userPrompt = `Dados do vendedor:
+- Nome: ${seller.name || "N/A"}
+- CNPJ: ${seller.cnpj || "N/A"}
+- Setor/CNAE: ${seller.cnae || seller.sector || "N/A"}
+- Estado/Cidade: ${seller.state || "N/A"} / ${seller.city || "N/A"}
+- Faturamento anual: R$${seller.revenue ? (seller.revenue / 1e6).toFixed(1) + "M" : "N/A"}
+- Lucro/EBITDA: R$${seller.ebitda ? (seller.ebitda / 1e6).toFixed(1) + "M" : "N/A"}
+- Valor pedido (asking price): R$${seller.asking_price ? (seller.asking_price / 1e6).toFixed(1) + "M" : "N/A"}
+- Descrição: ${seller.description || "N/A"}
+
+Retorne JSON com este formato:
+{
+  "buyer_profiles": [
+    {
+      "strategy": "horizontal|vertical|diversification",
+      "label": "Descrição curta do perfil (ex: Concorrentes de beneficiamento de grãos)",
+      "motivation": "Por que esse comprador compraria (1-2 frases)",
+      "cnae_prefixes": ["10", "1061"],
+      "target_size": "Medium",
+      "min_capital_social": 1000000,
+      "search_nationwide": false
+    }
+  ],
+  "investment_thesis": "Resumo da tese de investimento em 2-3 frases",
+  "estimated_buyer_count": 50,
+  "recommended_asking_multiple": 2.5
+}`;
+        break;
+      }
+
       default:
         throw new Error(`Unknown analysis type: ${type}`);
     }
@@ -318,7 +362,7 @@ Retorne JSON com este formato exato:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: (type === "match" || type === "match-single") ? "google/gemini-2.5-flash" : "google/gemini-2.5-flash-lite",
+        model: (type === "match" || type === "match-single" || type === "parse-seller-intent") ? "google/gemini-2.5-flash" : "google/gemini-2.5-flash-lite",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

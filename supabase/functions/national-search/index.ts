@@ -77,12 +77,14 @@ serve(async (req) => {
       target_sector,
       target_state,
       target_size,
-      cnae_prefixes,       // Array of CNAE prefixes e.g. ["69", "70"] for financial consulting
-      min_capital_social,  // Minimum capital social to filter out micro-informals
-      max_capital_social,  // Maximum capital social to filter out giants (e.g. Itaú)
-      buyer_revenue_brl,   // Buyer's revenue to compute proximity ordering
+      cnae_prefixes,
+      min_capital_social,
+      max_capital_social,
+      buyer_revenue_brl,
       raw = false,
       limit,
+      mode,                  // "find-buyers" for reverse matching
+      seller_asking_price,   // asking price for buyer capacity filtering
     } = body;
 
     // Layer 1: DB-level filter - DISTINCT ON ensures 1 company per cnpj_basico
@@ -147,14 +149,24 @@ serve(async (req) => {
     const effectiveMaxCapital: number | null = max_capital_social ??
       (target_sector ? (SECTOR_DEFAULT_MAX_CAPITAL[target_sector] ?? null) : null);
 
-    // Capital social filters: prevents giants from dominating results
-    if (effectiveMaxCapital != null) {
-      params.push(String(effectiveMaxCapital));
-      conditions.push(`em.capital_social <= $${params.length}`);
-    }
-    if (min_capital_social != null) {
-      params.push(String(min_capital_social));
+    // Capital social filters
+    // For find-buyers mode: we want companies with enough capital to be potential buyers
+    if (mode === "find-buyers" && seller_asking_price) {
+      // Buyers should have capital social >= 30% of asking price (minimum financial capacity)
+      const minBuyerCapital = min_capital_social ?? Math.max(100_000, seller_asking_price * 0.3);
+      params.push(String(minBuyerCapital));
       conditions.push(`em.capital_social >= $${params.length}`);
+      // No max cap for buyers — we want larger companies
+    } else {
+      // Standard mode: prevents giants from dominating results
+      if (effectiveMaxCapital != null) {
+        params.push(String(effectiveMaxCapital));
+        conditions.push(`em.capital_social <= $${params.length}`);
+      }
+      if (min_capital_social != null) {
+        params.push(String(min_capital_social));
+        conditions.push(`em.capital_social >= $${params.length}`);
+      }
     }
 
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
@@ -162,12 +174,14 @@ serve(async (req) => {
     // DISTINCT ON requires ORDER BY to start with the DISTINCT ON column.
     // The secondary sort controls which establishment represents each company.
     let secondaryOrder = "em.capital_social DESC NULLS LAST";
-    if (buyer_revenue_brl != null && buyer_revenue_brl > 0) {
-      const targetCapital = buyer_revenue_brl * 0.15; // typical capital/revenue ratio
+    if (mode === "find-buyers") {
+      // For buyer search: order by largest capital first (most capable buyers)
+      secondaryOrder = "em.capital_social DESC NULLS LAST";
+    } else if (buyer_revenue_brl != null && buyer_revenue_brl > 0) {
+      const targetCapital = buyer_revenue_brl * 0.15;
       params.push(String(targetCapital));
       secondaryOrder = `ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
     } else if (effectiveMaxCapital != null) {
-      // Sort by proximity to mid-range of the cap (targets regional companies, not micro)
       const midCapital = effectiveMaxCapital * 0.3;
       params.push(String(midCapital));
       secondaryOrder = `ABS(COALESCE(em.capital_social, 0) - $${params.length}) ASC NULLS LAST`;
