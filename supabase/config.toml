@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.google-search-validate]
 verify_jwt = false
+
+[functions.company-enrich]
+verify_jwt = false
