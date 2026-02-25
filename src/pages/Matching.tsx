@@ -2201,17 +2201,20 @@ export default function Matching() {
                   return (
                      <Card
                        key={m.id}
-                       className={`cursor-pointer transition-all hover:shadow-md ${
+                       className={`transition-all hover:shadow-md ${
                          isTop3 ? "ring-2 ring-warning/50 border-warning/30" : ""
                        } ${m.status === "dismissed" ? "opacity-50" : ""} ${isExpanded ? "md:col-span-2 lg:col-span-3" : ""}`}
-                       onClick={() => {
-                         setExpandedMatch(isExpanded ? null : m.id);
-                         if (!isExpanded && m.companies?.id) {
-                           recordFeedback(m.id, m.companies.id, "clicked", idx + 1);
-                         }
-                       }}
                      >
                        <CardContent className="pt-5">
+                         <div
+                           className="cursor-pointer"
+                           onClick={() => {
+                             setExpandedMatch(isExpanded ? null : m.id);
+                             if (!isExpanded && m.companies?.id) {
+                               recordFeedback(m.id, m.companies.id, "clicked", idx + 1);
+                             }
+                           }}
+                         >
                          <div className="flex items-start justify-between mb-3">
                            <div className="flex-1 min-w-0">
                              <div className="flex items-center gap-2 mb-1">
@@ -2429,9 +2432,11 @@ export default function Matching() {
                             </div>
                           </div>
 
+                         </div>{/* end clickable header zone */}
+
                          {/* Expanded detail */}
                          {isExpanded && (
-                           <div className="mt-4 pt-4 border-t space-y-4">
+                           <div className="mt-4 pt-4 border-t space-y-4" onClick={(e) => e.stopPropagation()}>
                              {/* Data confidence notice */}
                              {isFromNational && (
                                <div className="rounded-lg border border-muted-foreground/20 bg-muted/30 px-3 py-2 flex items-center gap-2">
