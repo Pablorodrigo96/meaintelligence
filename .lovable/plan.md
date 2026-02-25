@@ -1,20 +1,20 @@
 
 
-## Atualizar o CX e testar o Google CSE
+## Plano: Abandonar Google CSE e tornar o sistema funcional sem ele
 
-O novo Search Engine ID (CX) extraido do codigo que voce compartilhou e: `545444b5a8bb94bbd`
+O sistema atual usa três fontes para busca de empresas: **Perplexity**, **Google CSE** e **Base Nacional**. Como o Google CSE continua com problemas de permissão, vamos removê-lo do fluxo ativo para que o sistema funcione de forma estável com as duas fontes restantes.
 
-O CX antigo nos logs era `e2bfbb4ce6...`. Este novo CX pertence ao Search Engine que voce acabou de criar, o que deve resolver o problema de permissao (403) que era causado pelo CX antigo estar associado a um projeto Google Cloud diferente.
+### Escopo das alterações
 
-### Plano
+**Passo 1** -- Identificar onde o `google-search-validate` é chamado no frontend e garantir que o fluxo de matching/busca funcione sem ele (tratando a ausência de resultados do Google como cenário normal, não como erro).
 
-**Passo 1** -- Atualizar o secret `GOOGLE_CSE_CX` com o novo valor `545444b5a8bb94bbd`
+**Passo 2** -- Revisar a lógica de orquestração (provavelmente em `national-search` ou nas páginas `Matching`/`Companies`) para que o Google CSE seja ignorado ou desativado, sem quebrar o pipeline.
 
-**Passo 2** -- Chamar a edge function `google-search-validate` com um teste real (ex: setor Telecom, estado RS) para confirmar que o 403 foi resolvido
+**Passo 3** -- Manter o código da edge function `google-search-validate` intacto (apenas não chamá-lo), para facilitar a reativação futura quando as credenciais estiverem corretas.
 
-**Passo 3** -- Se funcionar, verificar os resultados retornados. Se ainda der 403, o problema esta na chave API e nao no CX.
+### Resultado esperado
 
-### Lembrete importante
+O sistema de busca e validação de empresas funcionará exclusivamente com **Perplexity + Base Nacional**, sem erros ou dependência do Google CSE.
 
-Certifique-se de que a opcao **"Pesquisar em toda a web"** esta ativada nas configuracoes do seu Search Engine em `programmablesearchengine.google.com`. Caso contrario, a busca ficara restrita apenas ao dominio `google.com` que voce adicionou.
+Preciso explorar o código do frontend para identificar exatamente onde o Google CSE é referenciado antes de implementar.
 
