@@ -1,54 +1,125 @@
 
 
-## Levenshtein Fuzzy Matching para Cross-Reference Web
+## Tripla Validação: Base Nacional + Perplexity + Google Custom Search
 
-### O que muda
+### Conceito
 
-Substituir o matching atual baseado em `includes()` e busca de palavras por **similaridade de Levenshtein**, que mede a distância de edição entre strings. Isso captura variações como:
-- "Tecnologia XYZ" vs "XYZ Tecnologia" (ordem diferente)
-- "Telecom Brasil" vs "Telecombrasil" (sem espaço)
-- "NetServ" vs "Net Serv" (segmentação)
+Adicionar o Google Custom Search como terceira camada de validação paralela ao Perplexity, criando um sistema de ranking por autoridade digital com pontuação cumulativa:
 
-### Implementação
-
-**Arquivo: `src/pages/Matching.tsx`**
-
-1. **Adicionar função `levenshteinDistance(a, b)`** — algoritmo clássico O(n×m) com matriz de distância. Para os tamanhos de nome envolvidos (~5-30 chars após normalização), a performance é irrelevante.
-
-2. **Adicionar função `levenshteinSimilarity(a, b)`** — retorna valor 0-1:
 ```text
-similarity = 1 - (distance / max(a.length, b.length))
+┌──────────────────────────────────────────────────────────┐
+│  CAMADA 1: Base Nacional (custo zero)                    │
+│  2000 empresas → scoring local → 200 qualificadas       │
+└──────────────┬───────────────────────────────────────────┘
+               │ paralelo (Promise.all)
+       ┌───────┴────────┐
+       ▼                ▼
+┌──────────────┐  ┌─────────────────┐
+│  Perplexity  │  │  Google Custom   │
+│  Sonar       │  │  Search API      │
+│  ~20 nomes   │  │  ~10 resultados  │
+└──────┬───────┘  └────────┬────────┘
+       └───────┬───────────┘
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  CAMADA 3: Cross-reference triplo                        │
+│  DB only          → score base                           │
+│  DB + Perplexity  → +15 pontos, badge "Validada Web"     │
+│  DB + Google      → +10 pontos, badge "Google"           │
+│  DB + ambos       → +25 pontos, badge "Dupla Validação"  │
+└──────────────────────────────────────────────────────────┘
 ```
 
-3. **Adicionar função `bestMatchSimilarity(companyTokens, webTokens)`** — compara também por tokens (palavras) para capturar nomes reordenados. Retorna o maior score entre:
-   - Similaridade da string completa
-   - Similaridade por melhor combinação de tokens significativos (>3 chars)
+### Pré-requisito: Chave API do Google
 
-4. **Substituir o bloco de matching** (linhas 498-507) por:
+O usuário mencionou que já tem a chave. Será necessário armazenar dois secrets:
+- `GOOGLE_CSE_API_KEY` — a chave de API do Google
+- `GOOGLE_CSE_CX` — o ID do Custom Search Engine (cx)
+
+Vou solicitar ambos via ferramenta de secrets antes de implementar o código.
+
+### Mudanças técnicas
+
+#### 1. Nova Edge Function: `google-search-validate`
+
+Arquivo: `supabase/functions/google-search-validate/index.ts`
+
+- Recebe `sector`, `state`, `city`
+- Monta query: `"empresas de [setor] em [cidade/estado]"`
+- Chama `https://www.googleapis.com/customsearch/v1?key=...&cx=...&q=...&num=10`
+- Extrai nomes de empresas dos títulos e snippets dos resultados
+- Normaliza e retorna array no mesmo formato do Perplexity (`{ original, normalized, rank }`)
+- Custo: R$0 (100 queries/dia gratuitas)
+
+#### 2. `src/pages/Matching.tsx` — Chamada paralela tripla
+
+Substituir a chamada sequencial do Perplexity por `Promise.all` com ambas as fontes:
+
 ```text
-const SIMILARITY_THRESHOLD = 0.65;  // 65% de similaridade mínima
-
-const sim = Math.max(
-  bestMatchSimilarity(normalizedCompany, webNorm),
-  bestMatchSimilarity(normalizedRazao, webNorm)
-);
-
-if (sim >= SIMILARITY_THRESHOLD) {
-  // marca como validada, aplica boost
-}
+const [perplexityResult, googleResult] = await Promise.all([
+  supabase.functions.invoke("perplexity-validate", { body: { sector, state, city } }),
+  supabase.functions.invoke("google-search-validate", { body: { sector, state, city } }),
+]);
 ```
 
-O threshold de 0.65 é conservador o suficiente para evitar falsos positivos mas captura variações comuns de nomes empresariais.
+#### 3. Cross-reference com pontuação cumulativa
+
+Lógica de boost atualizada:
+- Match com Perplexity: `+15` pontos (mantém atual)
+- Match com Google: `+10` pontos (novo)
+- Os boosts são **cumulativos** — empresa que aparece em ambos ganha `+25`
+- Novas flags em `MatchDimensions`:
+  - `google_validated?: boolean`
+  - `google_rank?: number | null`
+
+#### 4. UI: Badges diferenciados
+
+- **Apenas Perplexity**: Badge verde "Validada Web" (Globe icon) — como hoje
+- **Apenas Google**: Badge azul "Google" (Search icon)
+- **Ambos**: Badge dourado "Dupla Validação" (Shield icon) — máxima confiança
+
+#### 5. PROGRESS_STEPS atualizado
+
+Adicionar step para Google Search entre os existentes:
+```text
+{ label: "Validando presença digital (Perplexity + Google)...", pct: 70 },
+```
+Fusionar em um único step já que rodam em paralelo.
+
+#### 6. Filtro de resultados na UI
+
+Expandir o toggle "Validadas Web" para incluir opções:
+- Todas (200)
+- Validadas Web (Perplexity ou Google)
+- Dupla Validação (ambos)
+
+### Custo mensal estimado (100 queries/dia)
+
+| Componente | Custo/mês |
+|---|---|
+| Base Nacional | R$0 |
+| Perplexity Sonar | ~R$24 |
+| Google Custom Search | R$0 (100/dia grátis) |
+| **Total** | **~R$24/mês** |
+
+### Arquivos a criar/modificar
+
+| Arquivo | Ação |
+|---|---|
+| `supabase/functions/google-search-validate/index.ts` | Criar — Edge function para Google CSE |
+| `supabase/config.toml` | Registrar nova função |
+| `src/pages/Matching.tsx` | Modificar — Promise.all triplo, cross-reference cumulativo, badges diferenciados, filtros expandidos |
+
+### Sequência de implementação
+
+1. Solicitar secrets `GOOGLE_CSE_API_KEY` e `GOOGLE_CSE_CX` ao usuário
+2. Criar edge function `google-search-validate`
+3. Modificar `Matching.tsx` com chamada paralela e cross-reference cumulativo
+4. Atualizar UI com badges e filtros
 
 ### Detalhes técnicos
 
-A função Levenshtein usa programação dinâmica com uma única linha de memória (otimização de espaço O(min(n,m))). Nenhuma dependência externa necessária.
+A Google Custom Search API retorna resultados genéricos (títulos de páginas, snippets) — não nomes estruturados como o Perplexity. A edge function precisará extrair nomes de empresas dos campos `title` e `snippet` usando heurísticas simples (split por separadores comuns como `|`, `-`, `—`). O mesmo `normalizeNameForMatch` + Levenshtein será usado para o cruzamento.
 
-A comparação por tokens resolve o problema de ordem: "ABC Telecom" vs "Telecom ABC" terá similaridade alta porque os tokens individuais "abc" e "telecom" fazem match perfeito.
-
-### Arquivo a modificar
-
-| Arquivo | Mudança |
-|---|---|
-| `src/pages/Matching.tsx` | Adicionar `levenshteinDistance`, `levenshteinSimilarity`, `bestMatchSimilarity`; substituir bloco de substring matching por similaridade com threshold 0.65 |
+Se o Google falhar ou não estiver configurado, o fluxo continua normalmente com Perplexity apenas (graceful degradation dupla).
 
