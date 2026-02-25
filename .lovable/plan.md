@@ -1,72 +1,42 @@
 
 
-## Plano: Corrigir parsing IA + máscaras de moeda
+## Plano: Rastrear origem das empresas + melhorar aba Empresas + fix build error
 
-Três correções cirúrgicas, todas confirmadas pela leitura do código atual.
+### Contexto
 
-### 1. Regex no `ai-analyze` (linha 405)
+As empresas mineradas pelo Matching JÁ são salvas na tabela `companies` (linhas 646-653 e 1201-1208 do Matching.tsx). Porém, não há como distinguir se uma empresa foi cadastrada manualmente ou veio de uma busca. E a aba "Empresas" mostra todas sem contexto de origem.
 
-O regex atual prioriza array `[...]` sobre objeto `{...}`, descartando o wrapper `buyer_profiles`. Inverter a ordem:
+### 1. Adicionar coluna `source` na tabela `companies`
 
-**`supabase/functions/ai-analyze/index.ts` linha 405:**
-```js
-// DE:
-const jsonMatch = stripped.match(/\[[\s\S]*\]/) || stripped.match(/\{[\s\S]*\}/);
-// PARA:
-const jsonMatch = stripped.match(/\{[\s\S]*\}/) || stripped.match(/\[[\s\S]*\]/);
+Migração SQL:
+```sql
+ALTER TABLE companies ADD COLUMN source text DEFAULT 'manual';
 ```
 
-### 2. Fallback no frontend (linha 1032)
+Valores possíveis: `manual`, `target_search`, `buyer_search`, `enriched`
 
-Adicionar fallback para quando o parsing já retorna array direto.
+### 2. Matching.tsx — gravar `source` ao inserir empresas
 
-**`src/pages/Matching.tsx` linha 1032:**
-```ts
-// DE:
-const profiles: BuyerProfile[] = parsed.buyer_profiles || [];
-// PARA:
-const profiles: BuyerProfile[] = parsed.buyer_profiles || (Array.isArray(parsed) ? parsed : []);
-```
+- Na busca de alvos (linha 648): adicionar `source: "target_search"`
+- Na busca de compradores (linha 1203): adicionar `source: "buyer_search"`
 
-### 3. Helpers de moeda + máscaras nos 7 inputs financeiros
+### 3. Companies.tsx — exibir badge de origem + filtro
 
-Adicionar após linha 58 (após `sectorLabel`):
-```ts
-function formatBRL(value: string | number): string {
-  const num = typeof value === "string" ? Number(value.replace(/\D/g, "")) : value;
-  if (!num && num !== 0) return "";
-  return num.toLocaleString("pt-BR");
-}
-function parseBRL(formatted: string): string {
-  return formatted.replace(/\./g, "").replace(/,/g, "").replace(/\D/g, "");
-}
-function handleCurrencyChange(formatted: string, setter: (val: string) => void) {
-  setter(parseBRL(formatted));
-}
-```
+- Adicionar badge colorido no card: "Manual" (cinza), "Busca Alvos" (azul), "Busca Compradores" (verde)
+- Adicionar filtro dropdown "Origem" ao lado do filtro de setor
+- Exibir CNPJ formatado no card quando disponível
+- Exibir contagem total de empresas no header
 
-**Formulário do vendedor** (linhas 1990, 1994, 1998) — trocar `type="number"` por `inputMode="numeric"` com `formatBRL`:
-```tsx
-<Input inputMode="numeric"
-  value={sellerData.revenue ? formatBRL(sellerData.revenue) : ""}
-  onChange={(e) => handleCurrencyChange(e.target.value, (v) => setSellerData(prev => ({ ...prev, revenue: v })))}
-  placeholder="Ex: 5.000.000" />
-```
-Mesmo padrão para `ebitda` e `asking_price`.
+### 4. Fix build error TS1128 (Matching.tsx linha 3334)
 
-**Wizard Step 1** (linhas 2386, 2390, 2394, 2398) — mesmo padrão para `min_revenue`, `max_revenue`, `min_ebitda`, `max_ebitda`.
-
-### 4. Build error TS1128 (linha 3322)
-
-O arquivo termina corretamente com `}` na linha 3322 — confirmado pela leitura. Provavelmente um caractere BOM/invisível. A reescrita da linha final resolverá.
+Reescrever as linhas finais (3333-3335) para eliminar caractere invisível que causa o erro de compilação.
 
 ### Resumo de alterações
-| Arquivo | Linhas | Alteração |
-|---------|--------|-----------|
-| `ai-analyze/index.ts` | 405 | Inverter regex |
-| `Matching.tsx` | 58 | Adicionar 3 helpers (`formatBRL`, `parseBRL`, `handleCurrencyChange`) |
-| `Matching.tsx` | 1032 | Fallback array direto |
-| `Matching.tsx` | 1990, 1994, 1998 | Máscaras moeda vendedor |
-| `Matching.tsx` | 2386, 2390, 2394, 2398 | Máscaras moeda wizard |
-| `Matching.tsx` | 3322 | Limpar caractere invisível |
+
+| Arquivo | Alteração |
+|---------|-----------|
+| Migration SQL | Adicionar coluna `source` em `companies` |
+| `Matching.tsx` linhas 648, 1203 | Gravar `source` ao inserir empresas |
+| `Matching.tsx` linhas 3333-3335 | Fix TS1128 (caractere invisível) |
+| `Companies.tsx` | Badge de origem, filtro por origem, CNPJ formatado, contagem |
 
