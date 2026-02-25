@@ -1,123 +1,126 @@
 
 
-## Plano: Badge "Enriquecida" + Motor de Busca Reversa (Seller → Buyers)
+## Auditoria do Módulo de Matching — Diagnóstico e Oportunidades de Melhoria
 
-### Parte 1: Badge "Enriquecida" no card compacto
-
-Alteração simples no `src/pages/Matching.tsx`. A variável `contactInfo` já é calculada na linha 2199. Basta adicionar um badge na zona de badges (após linha 2273, junto aos outros badges) que aparece quando `contactInfo` existe.
-
-**Arquivo: `src/pages/Matching.tsx`**
-- Após o badge "Dados estimados" (~linha 2273), adicionar:
-```tsx
-{contactInfo && (
-  <Badge className="text-[10px] bg-primary/15 text-primary border-primary/30 border">
-    <UserCheck className="w-2.5 h-2.5 mr-0.5" />Enriquecida
-  </Badge>
-)}
-```
-- Garantir que `UserCheck` está importado do `lucide-react` (provavelmente já está)
+### Arquivo principal: `src/pages/Matching.tsx` (3.244 linhas)
 
 ---
 
-### Parte 2: Matching Reverso — Encontrar compradores para um vendedor
+### PROBLEMA CRÍTICO 1: Arquivo monolítico de 3.244 linhas
 
-#### Conceito
+O arquivo `Matching.tsx` concentra absolutamente tudo: tipos, constantes, mapas CNAE, lógica de scoring, formulários, cards de resultado, analytics e busca reversa. Isso causa:
+- Dificuldade de manutenção e navegação
+- Re-renderizações desnecessárias (qualquer mudança de estado re-processa tudo)
+- Impossibilidade de testar componentes isoladamente
 
-Hoje o fluxo é: **Comprador define critérios → Sistema encontra empresas-alvo (sellers)**.
+**Sugestão**: Extrair em módulos:
+- `src/lib/matching/scoring.ts` — funções `scoreCompanyLocal`, `parseIntentLocal`, constantes `CNAE_VALUE_CHAIN`, `SECTOR_BOTTLENECK_MAP`, `KEYWORD_MAP`
+- `src/lib/matching/types.ts` — interfaces `MatchDimensions`, `MatchResult`, `SellerData`, `BuyerProfile`
+- `src/components/matching/MatchCard.tsx` — card de resultado individual
+- `src/components/matching/BuyerSearchForm.tsx` — formulário do vendedor
+- `src/components/matching/CriteriaWizard.tsx` — wizard de 3 passos
+- `src/components/matching/FunnelCard.tsx` — já existe inline, extrair
 
-O fluxo reverso é: **Assessor recebe um vendedor → Sistema identifica potenciais compradores no mercado**.
+---
 
-Para o exemplo dado: empresa de beneficiamento de arroz + cestas básicas, Gravataí/RS, lucro R$1.8M, pedindo R$3M.
+### PROBLEMA 2: Busca reversa salva empresas duplicadas no banco
 
-Os possíveis compradores seriam:
-1. **Concorrentes maiores** (consolidação horizontal) — outras empresas de beneficiamento de arroz/alimentos
-2. **Empresas de cadeia a montante/jusante** (integração vertical) — distribuidoras de alimentos, redes de supermercados, cooperativas agrícolas
-3. **Fundos de investimento** focados em agro/alimentos
-4. **Empresas de setores adjacentes** querendo diversificar para alimentos
+Cada vez que `runBuyerSearch` executa, ele insere TODAS as empresas encontradas na tabela `companies` (linha 1117) sem verificar se já existem. Se o usuário rodar a busca 3 vezes, terá 3 cópias de cada empresa. O mesmo ocorre no `runMatchMutation` (linha 625).
 
-#### Arquitetura proposta
+**Sugestão**: Antes de inserir, verificar por CNPJ se a empresa já existe:
+```sql
+SELECT id FROM companies WHERE cnpj = $1 AND user_id = $2 LIMIT 1
+```
+Se existir, reutilizar o `id` existente em vez de inserir novamente.
 
-**Nova aba no módulo de Matching: "Buscar Compradores"**
+---
 
-O wizard terá um formulário diferente:
+### PROBLEMA 3: Inserções sequenciais lentas (N+1)
 
-```text
-┌────────────────────────────────────────────┐
-│  Modo: [Buscar Alvos] [Buscar Compradores] │
-├────────────────────────────────────────────┤
-│  Dados do Vendedor:                        │
-│  Nome da empresa: _______________          │
-│  CNPJ: _______________                     │
-│  Setor/CNAE: _______________               │
-│  Estado/Cidade: _____ / _____              │
-│  Faturamento anual: R$ _______             │
-│  Lucro/EBITDA: R$ _______                  │
-│  Valor pedido (asking price): R$ _______   │
-│  Descrição do negócio: ________________    │
-│                                            │
-│  [Buscar Compradores Potenciais]           │
-└────────────────────────────────────────────┘
+Nas linhas 623-658 e 1116-1157, cada empresa é inserida uma a uma com `await`. Para 200 empresas, são 400 chamadas sequenciais (1 insert company + 1 insert match). Isso pode levar minutos.
+
+**Sugestão**: Usar batch insert com `supabase.from("companies").insert([...array]).select()` e depois `supabase.from("matches").insert([...array])` em uma única operação.
+
+---
+
+### PROBLEMA 4: Busca reversa não tem validação web
+
+O fluxo "Buscar Alvos" inclui validação Perplexity + Google (linhas 560-618), mas o fluxo "Buscar Compradores" pula completamente essa etapa. Compradores potenciais não são validados na web.
+
+**Sugestão**: Adicionar a mesma etapa de validação web na busca reversa, adaptada para verificar se as empresas compradoras realmente existem e têm presença digital.
+
+---
+
+### PROBLEMA 5: Size Fit no scoring reverso usa lógica incorreta
+
+Linha 1049: `sizeOrder.indexOf(sellerData.sector ? "Small" : "Small")` — sempre retorna "Small" independentemente dos dados do vendedor. Deveria inferir o porte baseado no faturamento/EBITDA.
+
+**Sugestão**: Inferir porte do vendedor a partir do faturamento:
+```typescript
+const sellerRevenue = Number(sellerData.revenue) || 0;
+const sellerSize = sellerRevenue > 100_000_000 ? "Enterprise" :
+  sellerRevenue > 10_000_000 ? "Large" :
+  sellerRevenue > 1_000_000 ? "Medium" :
+  sellerRevenue > 100_000 ? "Small" : "Startup";
 ```
 
-**Lógica de busca de compradores (3 estratégias simultâneas):**
+---
 
-1. **Base Nacional — Consolidadores horizontais**
-   - Buscar empresas com MESMO CNAE (ou prefixo) do vendedor
-   - Porte igual ou maior (capital social > vendedor)
-   - Mesma região ou nacional
-   - Query: `cnae_prefixes` do vendedor + `min_capital_social` > capital do vendedor
+### PROBLEMA 6: Limpeza de matches antigos agressiva
 
-2. **Base Nacional — Integradores verticais**
-   - Usar a matriz `CNAE_VALUE_CHAIN` existente para identificar CNAEs upstream/downstream
-   - Ex: arroz (CNAE 10.61) → buscar distribuidoras (46.3x), supermercados (47.1x), cooperativas agrícolas (01.xx)
-   - Porte médio-grande
+Linha 536 e 1113: `await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new")` — deleta TODOS os matches "new" do usuário antes de salvar novos. Se o usuário alternar entre "Buscar Alvos" e "Buscar Compradores", perde os resultados anteriores.
 
-3. **IA — Análise estratégica de perfil de comprador ideal**
-   - Novo tipo `parse-seller-intent` no `ai-analyze` que recebe os dados do vendedor e retorna:
-     - Lista de perfis de compradores ideais (setor, porte, motivação)
-     - CNAEs sugeridos para busca
-     - Tese de investimento resumida
-   - Usado para refinar as buscas nas camadas 1 e 2
+**Sugestão**: Adicionar um campo `match_type` na tabela `matches` ("target_search" | "buyer_search") e deletar apenas os matches do mesmo tipo. Ou criar uma coluna `search_session_id` para agrupar buscas.
 
-**Scoring reverso (Buyer Fit Score):**
+---
 
-Para cada potencial comprador encontrado, calcular:
-- **Capacity Fit** (0-100): O comprador tem capacidade financeira para pagar o asking price? (capital social vs asking price)
-- **Sector Fit** (0-100): Sinergia setorial (mesmo CNAE, adjacente, vertical)
-- **Size Fit** (0-100): Porte adequado (comprador deve ser >= vendedor)
-- **Location Fit** (0-100): Proximidade geográfica
-- **Strategic Fit** (0-100): Potencial de sinergia (consolidação, integração, diversificação)
+### PROBLEMA 7: national-search usa LIKE sem índice para CNAE
 
-### Alterações por arquivo
+Linha 134: `e.cnae_fiscal_principal LIKE '${p}%'` é injetado diretamente no SQL sem prepared statement para o valor do prefixo CNAE. Além de potencial SQL injection (embora os prefixos venham do código), `LIKE` sem índice em 50M+ registros é lento.
 
-**Arquivo: `src/pages/Matching.tsx`**
-- Adicionar toggle no topo: "Buscar Alvos" (atual) vs "Buscar Compradores" (novo)
-- Novo estado `matchMode: "find-targets" | "find-buyers"`
-- Quando `matchMode === "find-buyers"`, exibir formulário do vendedor em vez do wizard atual
-- A lógica de resultados e cards pode ser reutilizada (mesma estrutura)
+**Sugestão**: 
+1. Usar prepared statements para os prefixos CNAE
+2. Considerar um índice `btree` na coluna `cnae_fiscal_principal` se não existir
+3. Usar `LEFT(cnae_fiscal_principal, 2) = $N` em vez de LIKE para prefixos de 2 dígitos
 
-**Arquivo: `supabase/functions/ai-analyze/index.ts`**
-- Novo case `parse-seller-intent`: recebe dados do vendedor, retorna perfis de compradores ideais com CNAEs sugeridos
-- Novo case `match-buyers`: recebe vendedor + lista de candidatos, retorna scoring reverso
+---
 
-**Arquivo: `supabase/functions/national-search/index.ts`**
-- Novo modo de busca `mode: "find-buyers"` que inverte a lógica:
-  - Em vez de buscar empresas pequenas para um comprador grande, busca empresas maiores/iguais que poderiam comprar o vendedor
-  - Filtros: mesmo CNAE ou cadeia vertical, capital social >= asking price * 0.3, porte >= vendedor
+### PROBLEMA 8: Sem exportação de resultados
 
-### Fluxo completo do exemplo
+Não existe funcionalidade de exportar os resultados do matching (CSV, PDF). Para um assessor de M&A, compartilhar resultados com clientes é essencial.
 
-1. Assessor seleciona "Buscar Compradores"
-2. Preenche: "Beneficiamento de arroz, cestas básicas, Gravataí RS, lucro 1.8M, pedindo 3M"
-3. IA (`parse-seller-intent`) retorna:
-   - Perfil 1: "Concorrentes - empresas de beneficiamento de grãos (CNAE 10.6x), porte médio-grande"
-   - Perfil 2: "Distribuidoras de alimentos (CNAE 46.3x) buscando integração vertical"
-   - Perfil 3: "Redes de supermercado regionais (CNAE 47.1x) querendo marca própria"
-4. Sistema busca na Base Nacional com esses 3 perfis
-5. Resultados exibidos com Buyer Fit Score e análise de motivação de compra
-6. Assessor pode "Enriquecer" cada potencial comprador para obter contatos
+**Sugestão**: Adicionar botão "Exportar CSV" que gera um arquivo com: Nome, CNPJ, Setor, Score, Sinergia Dominante, Estado, Cidade, Telefone (se enriquecido), Email.
 
-### Dependências
-- Nenhuma nova — reutiliza `national-search`, `ai-analyze`, `company-enrich`
-- Mesmo banco externo de 50M+ registros
+---
+
+### PROBLEMA 9: Sem persistência do modo/contexto da busca reversa
+
+Quando o usuário preenche dados do vendedor e navega para outra página, perde tudo. Os estados `sellerData`, `buyerProfiles`, `investmentThesis` são voláteis.
+
+**Sugestão**: Salvar o contexto do vendedor no `match_criteria` com um campo `mode: "find-buyers"` e os dados do seller em `notes` (JSON). Ao voltar à página, carregar automaticamente.
+
+---
+
+### PROBLEMA 10: Sem "Enriquecer em lote"
+
+O enriquecimento é individual (clique por clique). Para 200 resultados, é impraticável.
+
+**Sugestão**: Botão "Enriquecer Top 10" que executa `enrichOneCompany` para as 10 empresas com maior score em paralelo (com throttle de 2 simultâneos para não sobrecarregar APIs).
+
+---
+
+### RESUMO DE PRIORIDADES
+
+| # | Problema | Impacto | Esforço |
+|---|----------|---------|---------|
+| 2 | Empresas duplicadas no banco | Alto | Baixo |
+| 5 | Size Fit incorreto na busca reversa | Alto | Baixo |
+| 3 | Inserções sequenciais lentas | Médio | Médio |
+| 7 | SQL injection + performance CNAE | Médio | Médio |
+| 6 | Limpeza agressiva de matches | Médio | Médio |
+| 8 | Exportação CSV | Alto (UX) | Médio |
+| 10 | Enriquecer em lote | Alto (UX) | Médio |
+| 1 | Refatoração do monolito | Alto (manutenção) | Alto |
+| 4 | Validação web na busca reversa | Médio | Médio |
+| 9 | Persistência do contexto seller | Baixo | Baixo |
 
