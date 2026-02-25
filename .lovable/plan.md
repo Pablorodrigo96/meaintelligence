@@ -1,57 +1,20 @@
 
 
-## Diagnóstico do zero — Google CSE 403
+## Atualizar o CX e testar o Google CSE
 
-### O que sabemos com certeza
-- A chave API começa com `AIzaSyAocb` (confirmado via log de debug)
-- O projeto Google Cloud é `1067714511108`
-- A Custom Search API aparece como ativa no console
-- O billing está ativo
-- O erro é sempre: `"This project does not have the access to Custom Search JSON API."` com `PERMISSION_DENIED`
+O novo Search Engine ID (CX) extraido do codigo que voce compartilhou e: `545444b5a8bb94bbd`
 
-### Nova hipótese: API errada ativada
+O CX antigo nos logs era `e2bfbb4ce6...`. Este novo CX pertence ao Search Engine que voce acabou de criar, o que deve resolver o problema de permissao (403) que era causado pelo CX antigo estar associado a um projeto Google Cloud diferente.
 
-Existem **duas APIs diferentes** no Google Cloud com nomes parecidos:
+### Plano
 
-```text
-1. "Custom Search API"         → customsearch.googleapis.com  ← ESTA é a correta
-2. "Custom Search JSON API"    → (nome que aparece no erro)
-```
+**Passo 1** -- Atualizar o secret `GOOGLE_CSE_CX` com o novo valor `545444b5a8bb94bbd`
 
-O Google mudou a nomenclatura ao longo do tempo. A API que precisa estar ativa é **`customsearch.googleapis.com`** (aparece como "Custom Search API" na biblioteca de APIs). Se você ativou outra variante, o erro 403 persiste.
+**Passo 2** -- Chamar a edge function `google-search-validate` com um teste real (ex: setor Telecom, estado RS) para confirmar que o 403 foi resolvido
 
-### Plano: Testar a chave diretamente no navegador
+**Passo 3** -- Se funcionar, verificar os resultados retornados. Se ainda der 403, o problema esta na chave API e nao no CX.
 
-Em vez de continuar tentando pela edge function, vamos testar a chave **diretamente** para isolar se o problema é a chave, a API, ou o Custom Search Engine (CX).
+### Lembrete importante
 
-**Passo 1 — Criar uma edge function de diagnóstico (`google-cse-debug`)**
-
-Esta função fará 3 testes independentes e retornará o resultado de cada um:
-
-1. **Teste 1**: Chamar a API com a chave e CX atuais → registrar status + erro exato
-2. **Teste 2**: Chamar a API **sem o parâmetro CX** → para diferenciar se o erro é da chave ou do CX
-3. **Teste 3**: Chamar o endpoint de info do Custom Search Engine (`https://cse.google.com/cse?cx={CX}`) → verificar se o CX existe
-
-Os resultados dos 3 testes serão retornados em um único JSON, permitindo diagnóstico completo.
-
-**Passo 2 — Analisar resultados e agir**
-
-| Teste 1 | Teste 2 | Teste 3 | Diagnóstico |
-|---------|---------|---------|-------------|
-| 403     | 403     | qualquer | Problema na chave ou API não ativada |
-| 403     | 200/400 | qualquer | Problema no CX |
-| 200     | —       | —       | Tudo funciona |
-
-**Passo 3 — Corrigir baseado no diagnóstico**
-
-- Se a chave é o problema → criar nova chave com API restrictions específicas para Custom Search API
-- Se o CX é o problema → verificar/recriar o Programmable Search Engine em `programmablesearchengine.google.com`
-- Se tudo funciona → remover a function de debug e o problema era transitório
-
-### Detalhes técnicos
-
-- Será criada uma edge function temporária `google-cse-debug` com `verify_jwt = false`
-- A function faz 3 `fetch` calls e retorna os resultados em JSON
-- Nenhuma alteração no código de produção (`google-search-validate` ou `Matching.tsx`)
-- Após o diagnóstico, a function será removida
+Certifique-se de que a opcao **"Pesquisar em toda a web"** esta ativada nas configuracoes do seu Search Engine em `programmablesearchengine.google.com`. Caso contrario, a busca ficara restrita apenas ao dominio `google.com` que voce adicionou.
 
