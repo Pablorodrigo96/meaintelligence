@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2, Mail, ExternalLink, Instagram, Linkedin, MapPinned, Users } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2, Mail, ExternalLink, Instagram, Linkedin, MapPinned, Users, ArrowLeftRight } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
@@ -201,6 +201,30 @@ const PROGRESS_STEPS = [
 ];
 
 type SearchSource = "carteira" | "nacional";
+type MatchMode = "find-targets" | "find-buyers";
+
+interface SellerData {
+  name: string;
+  cnpj: string;
+  cnae: string;
+  sector: string;
+  state: string;
+  city: string;
+  revenue: string;
+  ebitda: string;
+  asking_price: string;
+  description: string;
+}
+
+interface BuyerProfile {
+  strategy: string;
+  label: string;
+  motivation: string;
+  cnae_prefixes: string[];
+  target_size: string;
+  min_capital_social: number;
+  search_nationwide: boolean;
+}
 
 interface FunnelStats {
   db_fetched: number;
@@ -285,6 +309,14 @@ export default function Matching() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [geoOpen, setGeoOpen] = useState(false);
   const [searchSource, setSearchSource] = useState<SearchSource>("carteira");
+  const [matchMode, setMatchMode] = useState<MatchMode>("find-targets");
+  const [sellerData, setSellerData] = useState<SellerData>({
+    name: "", cnpj: "", cnae: "", sector: "", state: "", city: "",
+    revenue: "", ebitda: "", asking_price: "", description: "",
+  });
+  const [buyerProfiles, setBuyerProfiles] = useState<BuyerProfile[]>([]);
+  const [buyerSearchLoading, setBuyerSearchLoading] = useState(false);
+  const [investmentThesis, setInvestmentThesis] = useState<string>("");
   const [nationalCompanies, setNationalCompanies] = useState<any[]>([]);
   const [funnelStats, setFunnelStats] = useState<{
     db_fetched: number;
@@ -905,6 +937,246 @@ export default function Matching() {
     });
     setInvestorProfile("Moderado");
     setWizardStep(1);
+  };
+
+  // ── REVERSE MATCHING: Find buyers for a seller ──────────────────────────
+  const runBuyerSearch = async () => {
+    setBuyerSearchLoading(true);
+    setProgressStep(0);
+    try {
+      // Step 1: AI analysis — parse seller intent to get buyer profiles
+      setProgressStep(1);
+      const sellerPayload = {
+        name: sellerData.name,
+        cnpj: sellerData.cnpj,
+        cnae: sellerData.cnae,
+        sector: sellerData.sector,
+        state: sellerData.state,
+        city: sellerData.city,
+        revenue: sellerData.revenue ? Number(sellerData.revenue) : null,
+        ebitda: sellerData.ebitda ? Number(sellerData.ebitda) : null,
+        asking_price: sellerData.asking_price ? Number(sellerData.asking_price) : null,
+        description: sellerData.description,
+      };
+
+      const { data: aiData, error: aiError } = await supabase.functions.invoke("ai-analyze", {
+        body: { type: "parse-seller-intent", data: { seller: sellerPayload } },
+      });
+      if (aiError) throw new Error(`Erro na análise IA: ${aiError.message}`);
+      if (aiData?.error) throw new Error(aiData.error);
+
+      const parsed = aiData?.result || aiData;
+      const profiles: BuyerProfile[] = parsed.buyer_profiles || [];
+      setBuyerProfiles(profiles);
+      setInvestmentThesis(parsed.investment_thesis || "");
+
+      if (profiles.length === 0) throw new Error("A IA não encontrou perfis de compradores. Tente adicionar mais detalhes sobre o vendedor.");
+
+      // Step 2: Search national DB for each buyer profile
+      setProgressStep(2);
+      const allBuyers: any[] = [];
+      const askingPrice = Number(sellerData.asking_price) || 0;
+
+      for (const profile of profiles) {
+        const { data: searchData, error: searchError } = await supabase.functions.invoke("national-search", {
+          body: {
+            mode: "find-buyers",
+            cnae_prefixes: profile.cnae_prefixes,
+            target_state: profile.search_nationwide ? null : (sellerData.state || null),
+            min_capital_social: profile.min_capital_social || (askingPrice > 0 ? askingPrice * 0.3 : 100_000),
+            seller_asking_price: askingPrice || null,
+            limit: 500,
+          },
+        });
+        if (searchError) {
+          console.warn(`Search error for profile ${profile.label}:`, searchError);
+          continue;
+        }
+        const companies = searchData?.companies || [];
+        // Tag each company with the strategy
+        companies.forEach((c: any) => {
+          c._buyer_strategy = profile.strategy;
+          c._buyer_label = profile.label;
+          c._buyer_motivation = profile.motivation;
+        });
+        allBuyers.push(...companies);
+      }
+
+      // Deduplicate by cnpj_basico
+      const seenBaseCnpj = new Set<string>();
+      const uniqueBuyers = allBuyers.filter((c: any) => {
+        const baseCnpj = String(c.cnpj || "").replace(/\D/g, "").substring(0, 8);
+        if (!baseCnpj || seenBaseCnpj.has(baseCnpj)) return false;
+        seenBaseCnpj.add(baseCnpj);
+        return true;
+      });
+
+      if (uniqueBuyers.length === 0) throw new Error("Nenhum comprador potencial encontrado. Tente ajustar os dados do vendedor.");
+
+      // Step 3: Score buyers (Buyer Fit Score)
+      setProgressStep(3);
+      const scored = uniqueBuyers.map((buyer: any) => {
+        const capitalSocial = buyer.revenue ? buyer.revenue / 2 : null; // reverse of revenue = capital * 2
+        const actualCapital = capitalSocial ? capitalSocial : null;
+
+        // Capacity Fit: can the buyer afford the asking price?
+        let capacity_fit = 50;
+        if (actualCapital && askingPrice > 0) {
+          const ratio = actualCapital / askingPrice;
+          if (ratio >= 5) capacity_fit = 95;
+          else if (ratio >= 3) capacity_fit = 85;
+          else if (ratio >= 1.5) capacity_fit = 70;
+          else if (ratio >= 0.5) capacity_fit = 55;
+          else capacity_fit = 30;
+        }
+
+        // Sector Fit
+        const sellerCnae = sellerData.cnae || "";
+        const buyerCnae = buyer.description?.match(/CNAE: (\d+)/)?.[1] || "";
+        let sector_fit = 40;
+        if (sellerCnae && buyerCnae) {
+          if (buyerCnae.startsWith(sellerCnae.substring(0, 4))) sector_fit = 95;
+          else if (buyerCnae.startsWith(sellerCnae.substring(0, 2))) sector_fit = 80;
+          else if (buyer._buyer_strategy === "vertical") sector_fit = 70;
+          else if (buyer._buyer_strategy === "diversification") sector_fit = 55;
+        } else if (buyer.sector === sellerData.sector) {
+          sector_fit = 80;
+        }
+
+        // Size Fit: buyer should be >= seller
+        const sizeOrder = ["Startup", "Small", "Medium", "Large", "Enterprise"];
+        const buyerSizeIdx = sizeOrder.indexOf(buyer.size || "Small");
+        const sellerSizeIdx = sizeOrder.indexOf(sellerData.sector ? "Small" : "Small"); // infer from revenue
+        let size_fit = 60;
+        if (buyerSizeIdx > sellerSizeIdx) size_fit = 90;
+        else if (buyerSizeIdx === sellerSizeIdx) size_fit = 70;
+        else size_fit = 40;
+
+        // Location Fit
+        let location_fit = 50;
+        if (sellerData.state && buyer.state === sellerData.state) {
+          location_fit = 85;
+          if (sellerData.city && buyer.city === sellerData.city) location_fit = 95;
+        }
+
+        // Strategic Fit (based on strategy type)
+        let strategic_fit = 50;
+        if (buyer._buyer_strategy === "horizontal") strategic_fit = 85;
+        else if (buyer._buyer_strategy === "vertical") strategic_fit = 75;
+        else if (buyer._buyer_strategy === "diversification") strategic_fit = 60;
+
+        // Buyer Fit Score (weighted)
+        const buyer_fit = Math.round(
+          capacity_fit * 0.30 +
+          sector_fit * 0.25 +
+          size_fit * 0.15 +
+          location_fit * 0.10 +
+          strategic_fit * 0.20
+        );
+
+        return {
+          company: buyer,
+          compatibility_score: Math.min(100, buyer_fit),
+          dimensions: {
+            capacity_fit,
+            sector_fit,
+            size_fit: size_fit,
+            location_fit,
+            strategic_fit,
+            financial_fit: capacity_fit,
+            risk_fit: 55,
+            revenue_synergy: strategic_fit,
+            cost_synergy: 50,
+            vertical_synergy: buyer._buyer_strategy === "vertical" ? 80 : 30,
+            consolidation_synergy: buyer._buyer_strategy === "horizontal" ? 80 : 30,
+            strategic_synergy: strategic_fit,
+            synergy_type: buyer._buyer_strategy === "horizontal" ? "Consolidação" : buyer._buyer_strategy === "vertical" ? "Verticalização" : "Diversificação",
+            gain_insights: [buyer._buyer_motivation || "Potencial comprador estratégico"],
+            bottleneck_resolution: null,
+            consolidator_score: buyer.num_filiais > 3 ? 80 : buyer.num_filiais > 1 ? 50 : 20,
+            quality_score: 50,
+            tier_priority: buyer._buyer_strategy === "horizontal" ? 1 : buyer._buyer_strategy === "vertical" ? 2 : 3,
+            tier_label: buyer._buyer_label || "Comprador",
+            web_validated: false,
+            web_rank: null,
+            google_validated: false,
+            google_rank: null,
+          },
+        };
+      });
+
+      scored.sort((a, b) => b.compatibility_score - a.compatibility_score);
+      const top = scored.slice(0, 200);
+
+      // Step 4: Save results
+      setProgressStep(5);
+      await supabase.from("matches").delete().eq("buyer_id", user!.id).eq("status", "new");
+
+      let savedCount = 0;
+      for (const { company, compatibility_score, dimensions } of top) {
+        const { data: savedCompany } = await supabase.from("companies").insert({
+          user_id: user!.id,
+          name: company.name,
+          cnpj: company.cnpj,
+          sector: company.sector,
+          state: company.state,
+          city: company.city,
+          size: company.size,
+          revenue: company.revenue,
+          description: company.description,
+          status: "active",
+          risk_level: "medium",
+        }).select().single();
+        if (savedCompany) {
+          await supabase.from("matches").insert({
+            buyer_id: user!.id,
+            seller_company_id: savedCompany.id,
+            compatibility_score,
+            ai_analysis: JSON.stringify({
+              analysis: `${dimensions.synergy_type}: ${company._buyer_motivation || "Comprador potencial identificado pela busca reversa"}`,
+              dimensions,
+              dimension_explanations: {
+                financial_fit: `Capacidade financeira: capital social ${company.revenue ? `estimado R$${(company.revenue / 2 / 1e6).toFixed(1)}M` : "N/A"} vs asking price R$${(Number(sellerData.asking_price) / 1e6).toFixed(1)}M`,
+                sector_fit: `Sinergia setorial: ${dimensions.synergy_type}`,
+                size_fit: `Porte: ${company.size || "N/A"}`,
+                location_fit: `Localização: ${company.city || ""}, ${company.state || ""}`,
+                risk_fit: "Risco padrão",
+              },
+              recommendation: company._buyer_motivation || "",
+              strengths: [dimensions.synergy_type, company._buyer_label || "Comprador potencial"],
+              weaknesses: [],
+              source: "reverse_matching",
+              ai_enriched: false,
+              buyer_strategy: company._buyer_strategy,
+              buyer_label: company._buyer_label,
+            }),
+            status: "new",
+          });
+          savedCount++;
+        }
+      }
+
+      setFunnelStats({
+        db_fetched: allBuyers.length,
+        pre_filtered: uniqueBuyers.length,
+        ai_analyzed: top.length,
+        final_matches: savedCount,
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      setActiveTab("results");
+      setProgressStep(0);
+      setVisibleCount(20);
+      toast({
+        title: "Busca de compradores concluída!",
+        description: `${savedCount} compradores potenciais encontrados a partir de ${profiles.length} perfis estratégicos.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+      setProgressStep(0);
+    } finally {
+      setBuyerSearchLoading(false);
+    }
   };
 
   const shortlistCount = matches.filter(m => m.status === "saved").length;
@@ -1554,6 +1826,33 @@ export default function Matching() {
         <p className="text-muted-foreground mt-1 text-sm">Motor de matching com IA e análise multidimensional</p>
       </div>
 
+      {/* ── MODE TOGGLE: Find Targets vs Find Buyers ── */}
+      <div className="flex items-center gap-1 p-1 rounded-lg bg-muted w-full sm:w-fit">
+        <button
+          onClick={() => setMatchMode("find-targets")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all flex-1 sm:flex-initial justify-center ${
+            matchMode === "find-targets"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Target className="w-4 h-4" />
+          Buscar Alvos
+        </button>
+        <button
+          onClick={() => setMatchMode("find-buyers")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all flex-1 sm:flex-initial justify-center ${
+            matchMode === "find-buyers"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <ArrowLeftRight className="w-4 h-4" />
+          Buscar Compradores
+          <Badge className="text-[10px] bg-accent/15 text-accent border-accent/30 border ml-1">Novo</Badge>
+        </button>
+      </div>
+
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="criteria" className="gap-1 text-xs md:text-sm"><Target className="w-4 h-4" /><span className="hidden sm:inline">Critérios</span><span className="sm:hidden">Perfil</span></TabsTrigger>
@@ -1564,8 +1863,157 @@ export default function Matching() {
           <TabsTrigger value="analytics" className="gap-1 text-xs md:text-sm"><BarChart3 className="w-4 h-4" /><span className="hidden sm:inline">Analytics</span><span className="sm:hidden">Stats</span></TabsTrigger>
         </TabsList>
 
-        {/* ========== TAB 1: CRITERIA - WIZARD ========== */}
+        {/* ========== TAB 1: CRITERIA ========== */}
         <TabsContent value="criteria" className="space-y-6 mt-6">
+
+          {/* ── FIND BUYERS MODE ── */}
+          {matchMode === "find-buyers" ? (
+            <div className="space-y-6">
+              <Card className="border-2 border-accent/30 bg-accent/5">
+                <CardHeader>
+                  <CardTitle className="font-display flex items-center gap-2 text-base">
+                    <ArrowLeftRight className="w-5 h-5 text-accent" />
+                    Dados do Vendedor
+                  </CardTitle>
+                  <CardDescription>
+                    Preencha os dados da empresa à venda. A IA analisará o mercado e buscará compradores potenciais na base nacional.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Nome da empresa</Label>
+                      <Input value={sellerData.name} onChange={(e) => setSellerData(prev => ({ ...prev, name: e.target.value }))} placeholder="Ex: Arrozeira Gaúcha Ltda" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>CNPJ</Label>
+                      <Input value={sellerData.cnpj} onChange={(e) => setSellerData(prev => ({ ...prev, cnpj: e.target.value }))} placeholder="00.000.000/0001-00" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Setor / CNAE</Label>
+                      <Select value={sellerData.cnae} onValueChange={(v) => {
+                        const cnaeToSector: Record<string, string> = { "61": "Telecom", "62": "Technology", "63": "Technology", "64": "Finance", "65": "Finance", "66": "Finance", "69": "Finance", "6920": "Finance", "70": "Finance", "86": "Healthcare", "85": "Education", "41": "Real Estate", "43": "Real Estate", "35": "Energy", "47": "Retail", "46": "Retail", "45": "Retail", "49": "Logistics", "52": "Logistics", "01": "Agribusiness", "10": "Manufacturing", "25": "Manufacturing", "73": "Technology" };
+                        const sectorVal = cnaeToSector[v] || cnaeToSector[v.substring(0, 2)] || "Other";
+                        setSellerData(prev => ({ ...prev, cnae: v, sector: sectorVal }));
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Selecione o CNAE" /></SelectTrigger>
+                        <SelectContent>
+                          {CNAE_OPTIONS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Estado</Label>
+                      <Select value={sellerData.state} onValueChange={(v) => setSellerData(prev => ({ ...prev, state: v }))}>
+                        <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {BRAZILIAN_STATES.map(s => <SelectItem key={s.uf} value={s.uf}>{s.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Cidade</Label>
+                    <Input value={sellerData.city} onChange={(e) => setSellerData(prev => ({ ...prev, city: e.target.value }))} placeholder="Ex: Gravataí" />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5 text-muted-foreground" />Faturamento anual (R$)</Label>
+                      <Input type="number" value={sellerData.revenue} onChange={(e) => setSellerData(prev => ({ ...prev, revenue: e.target.value }))} placeholder="Ex: 5000000" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />Lucro / EBITDA (R$)</Label>
+                      <Input type="number" value={sellerData.ebitda} onChange={(e) => setSellerData(prev => ({ ...prev, ebitda: e.target.value }))} placeholder="Ex: 1800000" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1"><Trophy className="w-3.5 h-3.5 text-muted-foreground" />Asking Price (R$)</Label>
+                      <Input type="number" value={sellerData.asking_price} onChange={(e) => setSellerData(prev => ({ ...prev, asking_price: e.target.value }))} placeholder="Ex: 3000000" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Descrição do negócio</Label>
+                    <Textarea value={sellerData.description} onChange={(e) => setSellerData(prev => ({ ...prev, description: e.target.value }))} placeholder="Ex: Empresa de beneficiamento de arroz e venda de cestas básicas. Atua há 15 anos na região metropolitana de Porto Alegre..." rows={3} className="resize-none" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Investment thesis from AI */}
+              {investmentThesis && (
+                <Card className="border-success/30 bg-success/5">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2"><BrainCircuit className="w-4 h-4 text-success" />Tese de Investimento</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-foreground">{investmentThesis}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Buyer profiles from AI */}
+              {buyerProfiles.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2"><Users className="w-4 h-4 text-primary" />Perfis de Compradores Identificados pela IA</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {buyerProfiles.map((p, i) => (
+                        <div key={i} className="rounded-lg border p-3 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Badge className={`text-[10px] ${
+                              p.strategy === "horizontal" ? "bg-primary/15 text-primary border-primary/30" :
+                              p.strategy === "vertical" ? "bg-accent/15 text-accent border-accent/30" :
+                              "bg-warning/15 text-warning border-warning/30"
+                            } border`}>
+                              {p.strategy === "horizontal" ? "Consolidação" : p.strategy === "vertical" ? "Verticalização" : "Diversificação"}
+                            </Badge>
+                          </div>
+                          <p className="text-sm font-medium">{p.label}</p>
+                          <p className="text-xs text-muted-foreground">{p.motivation}</p>
+                          <p className="text-[10px] font-mono text-muted-foreground">CNAE: {p.cnae_prefixes.map(c => `${c}xx`).join(", ")}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Progress bar */}
+              {buyerSearchLoading && progressStep > 0 && (
+                <Card className="border-primary/30">
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                      <span className="text-sm font-medium text-foreground">
+                        {progressStep === 1 ? "IA analisando perfil do vendedor..." :
+                         progressStep === 2 ? "Buscando compradores na Base Nacional..." :
+                         progressStep === 3 ? "Calculando Buyer Fit Score..." :
+                         "Salvando resultados..."}
+                      </span>
+                    </div>
+                    <Progress value={progressStep * 20} className="h-2" />
+                  </CardContent>
+                </Card>
+              )}
+
+              <Button
+                onClick={runBuyerSearch}
+                disabled={buyerSearchLoading || (!sellerData.cnae && !sellerData.description)}
+                size="lg"
+                className="w-full gap-2 bg-accent text-accent-foreground hover:bg-accent/90"
+              >
+                {buyerSearchLoading ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" />Buscando compradores...</>
+                ) : (
+                  <><Search className="w-5 h-5" />Buscar Compradores Potenciais</>
+                )}
+              </Button>
+            </div>
+          ) : (
+          /* ── FIND TARGETS MODE (existing wizard) ── */
+          <div className="space-y-6">
           {/* Progress indicator */}
           <div className="flex items-center gap-2 flex-wrap">
             {[1, 2, 3].map((step) => (
@@ -2099,6 +2547,8 @@ export default function Matching() {
               </div>
             </div>
           )}
+          </div>
+          )}
         </TabsContent>
 
         {/* ========== TAB 2: RESULTS - CARDS ========== */}
@@ -2269,6 +2719,11 @@ export default function Matching() {
                                   {isFromNational && (
                                     <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
                                       <AlertCircle className="w-2.5 h-2.5 mr-0.5" />Dados estimados
+                                    </Badge>
+                                  )}
+                                  {contactInfo && (
+                                    <Badge className="text-[10px] bg-primary/15 text-primary border-primary/30 border">
+                                      <UserCheck className="w-2.5 h-2.5 mr-0.5" />Enriquecida
                                     </Badge>
                                   )}
                                 </div>
