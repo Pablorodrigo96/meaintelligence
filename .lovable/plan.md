@@ -1,20 +1,41 @@
 
 
-## Plano: Abandonar Google CSE e tornar o sistema funcional sem ele
+## Plano: Corrigir exibição da Análise IA e Aprofundamento
 
-O sistema atual usa três fontes para busca de empresas: **Perplexity**, **Google CSE** e **Base Nacional**. Como o Google CSE continua com problemas de permissão, vamos removê-lo do fluxo ativo para que o sistema funcione de forma estável com as duas fontes restantes.
+### Problema 1 — Análise IA exibe JSON bruto
 
-### Escopo das alterações
+Na screenshot, a seção "Análise da IA" renderiza o JSON cru completo (com chaves, aspas, campos como `compatibility_score`, `dimensions`, etc.) em vez de exibir apenas o texto de análise.
 
-**Passo 1** -- Identificar onde o `google-search-validate` é chamado no frontend e garantir que o fluxo de matching/busca funcione sem ele (tratando a ausência de resultados do Google como cenário normal, não como erro).
+**Causa raiz**: Em `Matching.tsx` linha 706, quando a IA retorna a resposta e `result.analysis` é um objeto (não uma string), ou quando `result.analysis` está ausente e `result` é o JSON inteiro, esse valor é salvo como `analysis` no banco. Depois, o `parseAnalysis` retorna esse objeto como string (via `JSON.stringify` implícito do React), exibindo o JSON bruto na tela.
 
-**Passo 2** -- Revisar a lógica de orquestração (provavelmente em `national-search` ou nas páginas `Matching`/`Companies`) para que o Google CSE seja ignorado ou desativado, sem quebrar o pipeline.
+**Correção**:
 
-**Passo 3** -- Manter o código da edge function `google-search-validate` intacto (apenas não chamá-lo), para facilitar a reativação futura quando as credenciais estiverem corretas.
+1. **`parseAnalysis`** (linhas 728-744) — Quando `parsed.analysis` for um objeto em vez de string, extrair o texto dele (se tiver campo `analysis` dentro) ou converter para string legível. Adicionar fallback robusto.
 
-### Resultado esperado
+2. **`analyzeOneCompany`** (linha 706) — Garantir que `analysis` sempre salva uma **string**, não um objeto. Se `result.analysis` for um objeto, extrair `result.analysis.analysis` ou fazer `typeof result.analysis === 'object' ? JSON.stringify(result.analysis) : result.analysis`.
 
-O sistema de busca e validação de empresas funcionará exclusivamente com **Perplexity + Base Nacional**, sem erros ou dependência do Google CSE.
+3. **Exibição** (linha 2347) — Adicionar verificação: se `analysis` parecer ser JSON bruto (começa com `{` ou `` ` ``), não exibir diretamente. Exibir uma mensagem de fallback ou tentar extrair campos relevantes para exibição formatada (analysis text, strengths, weaknesses separadamente).
 
-Preciso explorar o código do frontend para identificar exatamente onde o Google CSE é referenciado antes de implementar.
+### Problema 2 — Aprofundamento Top 10 (DeepDiveDialog)
+
+O dialog abre mas parece ficar travado ou sem resultados visíveis. Possíveis causas:
+
+1. **Empresas sem CNPJ** — Se nenhuma das top 10 tem CNPJ, o Deep Dive retorna resultados vazios (sem `intelligence`, sem `public_data`). O componente renderiza cards vazios.
+
+2. **Erro silencioso na edge function** — A chamada a `company-deep-dive` pode falhar (BrasilAPI timeout, rate limit) sem feedback adequado ao usuário.
+
+**Correção**:
+
+1. Adicionar estado de feedback ao usuário quando nenhuma empresa tem CNPJ — exibir mensagem clara: "Nenhuma empresa do Top 10 possui CNPJ cadastrado. Adicione CNPJs na página de Empresas para ativar o Motor de Inteligência."
+
+2. Melhorar o loading state com progresso incremental (ex: "Processando empresa 3 de 10...").
+
+3. Se a `aiAnalysis` retornar markdown (com `**bold**`, `##` headers), renderizar com formatação adequada em vez de texto plano.
+
+### Resumo técnico das alterações
+
+| Arquivo | Alteração |
+|---|---|
+| `src/pages/Matching.tsx` | Corrigir `analyzeOneCompany` para garantir `analysis` é string. Corrigir `parseAnalysis` para lidar com objetos aninhados. Melhorar renderização da seção "Análise da IA" para formatar texto vs JSON. |
+| `src/components/DeepDiveDialog.tsx` | Adicionar estado vazio quando sem CNPJs. Renderizar `aiAnalysis` com suporte a markdown básico (bold, headers, listas). Melhorar feedback de progresso. |
 
