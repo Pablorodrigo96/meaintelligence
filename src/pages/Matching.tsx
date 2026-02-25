@@ -298,7 +298,7 @@ export default function Matching() {
   // AI enrichment per individual match (on-demand)
   const [aiEnrichingMatch, setAiEnrichingMatch] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(20);
-  const [webFilterMode, setWebFilterMode] = useState<"all" | "any" | "dual">("all");
+  const [webFilterMode, setWebFilterMode] = useState<"all" | "any">("all");
 
   // Buyer revenue field (Wizard Step 1)
   const [buyerRevenueBrl, setBuyerRevenueBrl] = useState<string>("");
@@ -527,7 +527,6 @@ export default function Matching() {
       // ── WEB VALIDATION: Perplexity + Google em paralelo ──
       advanceProgress(4);
       let webValidatedNames: { original: string; normalized: string; rank: number }[] = [];
-      let googleValidatedNames: { original: string; normalized: string; rank: number }[] = [];
       try {
         const sectorLabel = sectors.find(s => s.value === criteria.target_sector)?.label || criteria.target_sector || null;
         const webBody = {
@@ -535,21 +534,12 @@ export default function Matching() {
           state: criteria.target_state || null,
           city: criteria.geo_reference_city || null,
         };
-        const [perplexityRes, googleRes] = await Promise.all([
-          supabase.functions.invoke("perplexity-validate", { body: webBody }).catch(e => {
-            console.warn("Perplexity validation failed:", e);
-            return { data: null };
-          }),
-          supabase.functions.invoke("google-search-validate", { body: webBody }).catch(e => {
-            console.warn("Google validation failed:", e);
-            return { data: null };
-          }),
-        ]);
+        const perplexityRes = await supabase.functions.invoke("perplexity-validate", { body: webBody }).catch(e => {
+          console.warn("Perplexity validation failed:", e);
+          return { data: null };
+        });
         if (perplexityRes.data?.companies && Array.isArray(perplexityRes.data.companies)) {
           webValidatedNames = perplexityRes.data.companies;
-        }
-        if (googleRes.data?.companies && Array.isArray(googleRes.data.companies)) {
-          googleValidatedNames = googleRes.data.companies;
         }
       } catch (e) {
         console.warn("Web validation failed (graceful degradation):", e);
@@ -578,22 +568,8 @@ export default function Matching() {
           }
         }
 
-        // Google match (+10)
-        for (const gEntry of googleValidatedNames) {
-          const sim = Math.max(
-            bestMatchSimilarity(normalizedCompany, gEntry.normalized),
-            bestMatchSimilarity(normalizedRazao, gEntry.normalized)
-          );
-          if (sim >= SIMILARITY_THRESHOLD) {
-            item.dimensions.google_validated = true;
-            item.dimensions.google_rank = gEntry.rank;
-            item.dimensions.quality_score = Math.min(100, item.dimensions.quality_score + 10);
-            break;
-          }
-        }
-
-        // Recalculate final score if any web validation matched
-        if (item.dimensions.web_validated || item.dimensions.google_validated) {
+        // Recalculate final score if web validation matched
+        if (item.dimensions.web_validated) {
           item.compatibility_score = Math.min(100, Math.max(0, Math.round(
             item.compatibility_score * 0.85 + item.dimensions.quality_score * 0.15
           )));
@@ -775,10 +751,7 @@ export default function Matching() {
       result = result.filter((m) => {
         try {
           const parsed = JSON.parse(m.ai_analysis || "{}");
-          if (webFilterMode === "dual") {
-            return parsed.dimensions?.web_validated === true && parsed.dimensions?.google_validated === true;
-          }
-          return parsed.dimensions?.web_validated === true || parsed.dimensions?.google_validated === true;
+          return parsed.dimensions?.web_validated === true;
         } catch { return false; }
       });
     }
@@ -2118,7 +2091,6 @@ export default function Matching() {
                 <div className="flex items-center gap-1 p-0.5 rounded-md bg-muted">
                   <button onClick={() => setWebFilterMode("all")} className={`px-2 py-1 rounded text-xs font-medium transition-all ${webFilterMode === "all" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>Todas</button>
                   <button onClick={() => setWebFilterMode("any")} className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${webFilterMode === "any" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}><Globe className="w-3 h-3" />Validadas</button>
-                  <button onClick={() => setWebFilterMode("dual")} className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${webFilterMode === "dual" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}><Shield className="w-3 h-3" />Dupla</button>
                 </div>
                 <p className="text-sm text-muted-foreground ml-auto">
                   {paginatedMatches.length} de {displayMatches.length} resultados
@@ -2189,20 +2161,10 @@ export default function Matching() {
                                        <Building2 className="w-2.5 h-2.5 mr-0.5" />Potencial Consolidador
                                      </Badge>
                                    )}
-                                   {/* Web Validation badges */}
-                                   {dimensions?.web_validated && dimensions?.google_validated && (
-                                      <Badge className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/30 border">
-                                        <Shield className="w-2.5 h-2.5 mr-0.5" />Dupla Validação
-                                      </Badge>
-                                    )}
-                                   {dimensions?.web_validated && !dimensions?.google_validated && (
+                                   {/* Web Validation badge */}
+                                   {dimensions?.web_validated && (
                                       <Badge className="text-[10px] bg-success/15 text-success border-success/30 border">
                                         <Globe className="w-2.5 h-2.5 mr-0.5" />Validada Web{dimensions.web_rank ? ` #${dimensions.web_rank}` : ""}
-                                      </Badge>
-                                    )}
-                                   {!dimensions?.web_validated && dimensions?.google_validated && (
-                                      <Badge className="text-[10px] bg-blue-500/15 text-blue-600 border-blue-500/30 border">
-                                        <Search className="w-2.5 h-2.5 mr-0.5" />Google{dimensions.google_rank ? ` #${dimensions.google_rank}` : ""}
                                       </Badge>
                                     )}
                                   {(() => {
