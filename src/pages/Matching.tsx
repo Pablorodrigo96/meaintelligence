@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2 } from "lucide-react";
+import { Search, Zap, Star, X, ChevronDown, ChevronUp, BarChart3, Target, TrendingUp, Globe, Building2, DollarSign, Shield, Filter, MapPin, Microscope, Info, UserCheck, CheckCircle2, ArrowRight, ArrowLeft, RotateCcw, ThumbsUp, ThumbsDown, Trophy, Database, Sparkles, Loader2, BrainCircuit, PencilLine, Bookmark, Phone, AlertCircle, Link2, Mail, ExternalLink, Instagram, Linkedin, MapPinned, Users } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, PieChart, Pie, Cell } from "recharts";
@@ -297,6 +297,7 @@ export default function Matching() {
   const [feedbackLoading, setFeedbackLoading] = useState<Record<string, string>>({});
   // AI enrichment per individual match (on-demand)
   const [aiEnrichingMatch, setAiEnrichingMatch] = useState<string | null>(null);
+  const [enrichingMatch, setEnrichingMatch] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(20);
   const [webFilterMode, setWebFilterMode] = useState<"all" | "any">("all");
 
@@ -739,6 +740,36 @@ export default function Matching() {
       toast({ title: "Erro na análise IA", description: e.message, variant: "destructive" });
     } finally {
       setAiEnrichingMatch(null);
+    }
+  };
+
+  // Enrich a single company with contact data (3 layers: DB + BrasilAPI + Perplexity)
+  const enrichOneCompany = async (match: MatchResult) => {
+    if (!match.companies) return;
+    setEnrichingMatch(match.id);
+    try {
+      const cnpjRaw = match.companies.cnpj ? String(match.companies.cnpj).replace(/\D/g, "") : null;
+      const { data, error } = await supabase.functions.invoke("company-enrich", {
+        body: {
+          company_name: match.companies.name,
+          cnpj: cnpjRaw,
+          cnpj_basico: cnpjRaw ? cnpjRaw.substring(0, 8) : null,
+          sector: match.companies.sector,
+          state: match.companies.state,
+          city: match.companies.city,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const currentAnalysis = (() => { try { return JSON.parse(match.ai_analysis || "{}"); } catch { return {}; } })();
+      const enriched = { ...currentAnalysis, contact_info: data };
+      await supabase.from("matches").update({ ai_analysis: JSON.stringify(enriched) }).eq("id", match.id);
+      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      toast({ title: "Enriquecimento concluído!", description: `${data.sources?.length || 0} fontes consultadas · ${data.owners?.length || 0} sócios encontrados` });
+    } catch (e: any) {
+      toast({ title: "Erro no enriquecimento", description: e.message, variant: "destructive" });
+    } finally {
+      setEnrichingMatch(null);
     }
   };
 
@@ -2164,6 +2195,8 @@ export default function Matching() {
                    const isTop3 = idx < 3 && score >= 60;
                    const isFeedbackLoading = (action: string) => feedbackLoading[m.id] === action;
                    const isAiEnriching = aiEnrichingMatch === m.id;
+                   const isEnriching = enrichingMatch === m.id;
+                   const contactInfo = (() => { try { const p = JSON.parse(m.ai_analysis || "{}"); return p.contact_info || null; } catch { return null; } })();
 
                   return (
                      <Card
@@ -2378,8 +2411,21 @@ export default function Matching() {
                               >
                                 {isAiEnriching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                                 {ai_enriched ? "Re-analisar IA" : "Ver análise IA ✦"}
-                              </Button>
-                              {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                               </Button>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className={`h-7 text-xs gap-1 ${contactInfo ? "border-success/40 text-success hover:bg-success/10" : "border-warning/40 text-warning hover:bg-warning/10"}`}
+                                 disabled={isEnriching || !!enrichingMatch}
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   enrichOneCompany(m);
+                                 }}
+                               >
+                                 {isEnriching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Users className="w-3 h-3" />}
+                                 {contactInfo ? "Re-enriquecer" : "Enriquecer"}
+                               </Button>
+                               {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                             </div>
                           </div>
 
@@ -2394,8 +2440,102 @@ export default function Matching() {
                                    <span className="font-medium">Dados estimados — capital social proxy.</span> Receita e EBITDA são estimativas baseadas em capital social. Financial_fit calculado com peso reduzido.
                                  </p>
                                </div>
-                             )}
-                             <div className="grid gap-6 lg:grid-cols-2">
+                              )}
+                              {/* Contact Info Section (from enrichment) */}
+                              {contactInfo && (
+                                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="font-display font-semibold text-sm flex items-center gap-2">
+                                      <Users className="w-4 h-4 text-primary" />Sócios e Contato
+                                    </h4>
+                                    <div className="flex gap-1">
+                                      {contactInfo.sources?.map((src: string) => (
+                                        <Badge key={src} variant="outline" className="text-[10px]">
+                                          {src === "banco_nacional" ? "BD Nacional" : src === "brasilapi" ? "BrasilAPI" : src === "perplexity" ? "Web" : src}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  {/* Owners list */}
+                                  {contactInfo.owners && contactInfo.owners.length > 0 && (
+                                    <div className="space-y-2">
+                                      {contactInfo.owners.map((owner: any, oi: number) => (
+                                        <div key={oi} className="rounded-md border bg-background px-3 py-2">
+                                          <div className="flex items-center justify-between">
+                                            <div>
+                                              <span className="text-sm font-medium">{owner.name}</span>
+                                              <span className="text-xs text-muted-foreground ml-2">{owner.role}</span>
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                              {owner.linkedin && (
+                                                <a href={owner.linkedin} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary hover:text-primary/80">
+                                                  <Linkedin className="w-4 h-4" />
+                                                </a>
+                                              )}
+                                              {owner.instagram && (
+                                                <a href={owner.instagram.startsWith("http") ? owner.instagram : `https://instagram.com/${owner.instagram.replace("@", "")}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-pink-500 hover:text-pink-400">
+                                                  <Instagram className="w-4 h-4" />
+                                                </a>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {/* Contact details */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                                    {contactInfo.contact?.phones?.length > 0 && (
+                                      <div className="flex items-center gap-2">
+                                        <Phone className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                        <span className="text-muted-foreground">{contactInfo.contact.phones.join(" · ")}</span>
+                                      </div>
+                                    )}
+                                    {contactInfo.contact?.email && (
+                                      <div className="flex items-center gap-2">
+                                        <Mail className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                        <a href={`mailto:${contactInfo.contact.email}`} onClick={(e) => e.stopPropagation()} className="text-primary hover:underline text-sm">{contactInfo.contact.email}</a>
+                                      </div>
+                                    )}
+                                    {contactInfo.contact?.website && (
+                                      <div className="flex items-center gap-2">
+                                        <Globe className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                        <a href={contactInfo.contact.website.startsWith("http") ? contactInfo.contact.website : `https://${contactInfo.contact.website}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline text-sm truncate">{contactInfo.contact.website}</a>
+                                      </div>
+                                    )}
+                                    {contactInfo.contact?.instagram && (
+                                      <div className="flex items-center gap-2">
+                                        <Instagram className="w-3.5 h-3.5 text-pink-500 flex-shrink-0" />
+                                        <a href={`https://instagram.com/${contactInfo.contact.instagram.replace("@", "")}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline text-sm">{contactInfo.contact.instagram}</a>
+                                      </div>
+                                    )}
+                                    {contactInfo.contact?.linkedin_company && (
+                                      <div className="flex items-center gap-2">
+                                        <Linkedin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                        <a href={contactInfo.contact.linkedin_company} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline text-sm truncate">LinkedIn da Empresa</a>
+                                      </div>
+                                    )}
+                                    {contactInfo.contact?.address && (
+                                      <div className="flex items-start gap-2 sm:col-span-2">
+                                        <MapPinned className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                                        <span className="text-muted-foreground text-sm">{contactInfo.contact.address}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Citations */}
+                                  {contactInfo.citations && contactInfo.citations.length > 0 && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <span className="text-[10px] text-muted-foreground">Fontes:</span>
+                                      {contactInfo.citations.slice(0, 3).map((c: string, ci: number) => (
+                                        <a key={ci} href={c} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] text-primary hover:underline truncate max-w-[150px]">
+                                          [{ci + 1}]
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <div className="grid gap-6 lg:grid-cols-2">
                                <div className="space-y-4">
                                  <div>
                                   <h4 className="font-display font-semibold text-sm mb-2">Análise da IA</h4>
