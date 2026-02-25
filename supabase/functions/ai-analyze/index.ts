@@ -402,7 +402,7 @@ Retorne JSON com este formato:
         .replace(/^```(?:json|javascript|typescript)?\s*\n?/, '')
         .replace(/\n?```\s*$/, '')
         .trim();
-      const jsonMatch = stripped.match(/\[[\s\S]*\]/) || stripped.match(/\{[\s\S]*\}/);
+      const jsonMatch = stripped.match(/\{[\s\S]*\}/) || stripped.match(/\[[\s\S]*\]/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : stripped;
     } catch {
       parsed = content;
