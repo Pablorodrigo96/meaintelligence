@@ -915,8 +915,8 @@ export default function Matching() {
     return String(val);
   };
 
-  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean } => {
-    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
+  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean; apollo_enriched: boolean; employee_count: number | null; apollo_industry: string | null } => {
+    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null };
     try {
       const cleanedRaw = stripCodeFences(raw);
       const parsed = JSON.parse(cleanedRaw);
@@ -928,9 +928,12 @@ export default function Matching() {
         strengths: parsed.strengths || [],
         weaknesses: parsed.weaknesses || [],
         ai_enriched: parsed.ai_enriched === true,
+        apollo_enriched: parsed.apollo_enriched === true,
+        employee_count: parsed.employee_count || null,
+        apollo_industry: parsed.apollo_industry || null,
       };
     } catch {
-      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false };
+      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null };
     }
   };
 
@@ -1251,6 +1254,10 @@ export default function Matching() {
             strengths: [dimensions.synergy_type, company._buyer_label || "Comprador potencial"],
             weaknesses: [], source: "reverse_matching", ai_enriched: false,
             buyer_strategy: company._buyer_strategy, buyer_label: company._buyer_label,
+            apollo_enriched: (company as any).apollo_enriched || false,
+            employee_count: (company as any).employee_count || null,
+            apollo_industry: (company as any).apollo_industry || null,
+            decision_makers: (company as any).decision_makers || [],
           }),
           status: "new", match_type: "buyer_search",
         };
@@ -2841,6 +2848,21 @@ export default function Matching() {
                                   {contactInfo && (
                                     <Badge className="text-[10px] bg-primary/15 text-primary border-primary/30 border">
                                       <UserCheck className="w-2.5 h-2.5 mr-0.5" />Enriquecida
+                                    </Badge>
+                                  )}
+                                  {parsedData.apollo_enriched && (
+                                    <Badge className="text-[10px] bg-violet-500/15 text-violet-600 border-violet-500/30 border">
+                                      <Zap className="w-2.5 h-2.5 mr-0.5" />Apollo
+                                    </Badge>
+                                  )}
+                                  {parsedData.employee_count && parsedData.employee_count > 0 && (
+                                    <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
+                                      <Users className="w-2.5 h-2.5 mr-0.5" />{parsedData.employee_count} func.
+                                    </Badge>
+                                  )}
+                                  {parsedData.apollo_industry && (
+                                    <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                      {parsedData.apollo_industry}
                                     </Badge>
                                   )}
                                 </div>
