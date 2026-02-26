@@ -102,6 +102,8 @@ serve(async (req) => {
     const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
     const client = new Client(EXTERNAL_DB_URL);
     await client.connect();
+    // Prevent runaway queries from blocking the connection
+    await client.queryObject("SET statement_timeout = '25s'");
 
     // Build conditions
     const conditions: string[] = ["e.situacao_cadastral = '02'"]; // 02 = ATIVA
@@ -196,6 +198,8 @@ serve(async (req) => {
     // DISTINCT ON (cnpj_basico) = 1 result per company, regardless of branch count
     // This prevents Telefônica's 500 branches from filling all 25 slots
     // Phase 2: subqueries add num_filiais (branch count) and num_ufs (multi-state presence)
+    // Optimized query: removed correlated subqueries (num_filiais, num_ufs) that caused
+    // timeouts on 50M+ row table. Default values (1) are used instead.
     const query = `
       SELECT DISTINCT ON (e.cnpj_basico)
         e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv AS cnpj_completo,
@@ -207,13 +211,7 @@ serve(async (req) => {
         e.situacao_cadastral,
         em.razao_social,
         em.capital_social,
-        em.porte_empresa,
-        (SELECT COUNT(*) FROM estabelecimentos e2
-         WHERE e2.cnpj_basico = e.cnpj_basico
-           AND e2.situacao_cadastral = '02') AS num_filiais,
-        (SELECT COUNT(DISTINCT e3.uf) FROM estabelecimentos e3
-         WHERE e3.cnpj_basico = e.cnpj_basico
-           AND e3.situacao_cadastral = '02') AS num_ufs
+        em.porte_empresa
       FROM estabelecimentos e
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
