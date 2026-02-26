@@ -1,78 +1,101 @@
 
 
-## Plano: Melhorar fluxo de funil — card estático + ações inline + Shortlist completa
+## Plano: Painel Admin de Consumo de APIs por Usuário
 
-### Problema atual
+### Objetivo
 
-1. **Card "some" ao clicar Shortlist**: O `queryClient.invalidateQueries` causa re-render completo da lista, e o card pode mudar de posição ou o scroll resetar — dando a impressão de "sumir".
-2. **Ida e volta entre abas**: O usuário precisa ir para a aba Shortlist para enriquecer com Lusha, depois voltar para os 400 resultados para continuar trabalhando — fluxo confuso.
-3. **Falta de fluxo de funil**: O ideal é: Enriquecer → Analisar IA → card fica no lugar → clicar Shortlist → card sai dos resultados e vai para a aba Shortlist com todas as informações.
+Criar uma tabela `api_usage_logs` para registrar cada chamada de API externa (IA, Apollo, Lusha, Perplexity, Enriquecimento) por usuário, e um painel admin para visualizar o consumo agregado.
 
-### Solução
+### Alterações
 
-#### 1. Card não desaparece ao enriquecer/analisar — só sai ao clicar Shortlist
+#### 1. Nova tabela `api_usage_logs` (migração SQL)
 
-Atualizar o estado local **otimisticamente** sem invalidar a query inteira quando o status muda para "saved". O card muda o visual (badge verde "Shortlist ✓") mas permanece na posição até o próximo ciclo.
+```sql
+CREATE TABLE public.api_usage_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  service text NOT NULL,        -- 'ai-analyze', 'apollo', 'lusha', 'perplexity', 'company-enrich', 'national-search', 'deep-dive'
+  action text,                  -- tipo específico: 'match', 'risk', 'strategy', 'contract', etc.
+  tokens_used integer DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 
-**Alteração em `recordFeedback`** (~linha 780):
-- Ao invés de `queryClient.invalidateQueries`, usar `queryClient.setQueryData` para atualizar o match localmente (otimistic update)
-- Isso evita o re-render que causa o "sumiço"
+ALTER TABLE public.api_usage_logs ENABLE ROW LEVEL SECURITY;
 
-#### 2. Botão Lusha direto no card dos resultados
+-- Usuários podem inserir seus próprios logs
+CREATE POLICY "Users can insert own usage logs"
+  ON public.api_usage_logs FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id);
 
-Adicionar o botão "Enriquecer com Lusha" diretamente no card expandido da aba de Resultados (não apenas na Shortlist). Assim o usuário pode fazer todo o enriquecimento sem trocar de aba.
+-- Admins podem ver todos os logs
+CREATE POLICY "Admins can view all usage logs"
+  ON public.api_usage_logs FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'));
 
-**Alteração na seção expandida do card** (~linha 3060):
-- Adicionar botão Lusha ao lado de "Re-analisar IA" e "Enriquecer" quando `m.status === "saved"`
+-- Index para queries de agregação
+CREATE INDEX idx_usage_logs_user_service ON public.api_usage_logs (user_id, service);
+CREATE INDEX idx_usage_logs_created_at ON public.api_usage_logs (created_at);
+```
 
-#### 3. Filtrar cards salvos dos resultados após shortlist
+#### 2. `src/pages/Matching.tsx` — Registrar uso após cada chamada
 
-Quando o usuário clica "Shortlist", o card recebe o badge verde e permanece visível por 2 segundos (para feedback visual), depois é filtrado da lista de resultados. O `displayMatches` no tab de resultados passa a excluir `status === "saved"` por padrão, com opção de ver todos via filtro.
+Criar helper e inserir log após cada `supabase.functions.invoke`:
 
-**Alteração em `displayMatches`** (linha 1001):
 ```typescript
-const displayMatches = useMemo(() => {
-  let result = [...matches];
-  // Por padrão na aba results, excluir salvos (foram pra Shortlist)
-  if (statusFilter === "all") {
-    result = result.filter(m => m.status !== "saved" && m.status !== "dismissed");
-  } else if (statusFilter !== "all") {
-    result = result.filter(m => m.status === statusFilter);
-  }
-  // ... resto dos filtros
-}, [...]);
+const logApiUsage = async (service: string, action?: string) => {
+  if (!user?.id) return;
+  await supabase.from("api_usage_logs").insert({
+    user_id: user.id,
+    service,
+    action,
+  });
+};
 ```
 
-**Alteração no filtro de Status** (linha 2804):
-- Adicionar opção "Ativos" como default (novos + em análise)
-- Renomear "Todos" para incluir salvos+dispensados
+Inserir chamadas após cada invoke:
+- `ai-analyze` → `logApiUsage("ai-analyze", type)` (match-single, match, etc.)
+- `apollo-enrich` → `logApiUsage("apollo", "enrich")`
+- `lusha-enrich` → `logApiUsage("lusha", "enrich")`
+- `perplexity-validate` → `logApiUsage("perplexity", "validate")`
+- `company-enrich` → `logApiUsage("company-enrich", "enrich")`
+- `national-search` → `logApiUsage("national-search", "search")`
 
-#### 4. Shortlist com card completo e todas as ações
+Mesma lógica para `Strategy.tsx`, `Risk.tsx`, `Contracts.tsx`, `DueDiligence.tsx`, `DeepDiveDialog.tsx`.
 
-A aba Shortlist já tem cards razoáveis. Vamos garantir que mostrem **tudo**: Receita, EBITDA, funcionários, badges, seção de contato expandida, sócios, e botão Lusha — exatamente como o card expandido dos resultados.
+#### 3. Nova página `src/pages/AdminUsage.tsx` — Painel de consumo
 
-### Alterações no arquivo
+Página admin com:
+- **Cards de resumo**: Total de chamadas por serviço (últimos 30 dias)
+- **Tabela por usuário**: Colunas: Nome | IA | Apollo | Lusha | Perplexity | Enriquecimento | Total
+- **Filtro de período**: 7d, 30d, 90d
+- Query agrega `api_usage_logs` por `user_id` e `service`, faz join com `profiles` para nome
 
-| Local | Alteração |
-|-------|-----------|
-| `Matching.tsx` ~linha 757 | `updateStatus`: update otimístico via `setQueryData` em vez de `invalidateQueries` |
-| `Matching.tsx` ~linha 1001 | `displayMatches`: excluir `saved` e `dismissed` por padrão nos resultados |
-| `Matching.tsx` ~linha 2804 | Filtro de status: default "Ativos" (new), opção "Todos" para ver tudo |
-| `Matching.tsx` ~linha 3060 | Card expandido: adicionar botão Lusha inline quando status=saved |
-| `Matching.tsx` ~linha 3417 | Shortlist tab: garantir card completo com todas as informações e ações |
-
-### Fluxo após a mudança
-
-```text
-Resultados (400 leads)
-  ├─ Card: Enriquecer → dados de contato aparecem no card
-  ├─ Card: Análise IA → insights aparecem no card
-  ├─ Card: clica Shortlist → badge verde, card sai da lista
-  └─ Card: clica Ignorar → card sai da lista
-
-Shortlist (leads selecionados)
-  ├─ Card completo com TODAS as informações
-  ├─ Botão Lusha → enriquece inline
-  └─ Pode remover da shortlist → volta para Resultados
+```typescript
+// Query de agregação
+const { data } = await supabase
+  .from("api_usage_logs")
+  .select("user_id, service, created_at")
+  .gte("created_at", dateFilter);
+// Agrupar no cliente por user_id + service
 ```
+
+#### 4. `src/App.tsx` + `src/components/layout/AppSidebar.tsx` — Rota e nav
+
+- Adicionar rota `/admin/usage` → `<AdminUsage />`
+- Adicionar item no menu admin: `{ label: "Consumo de APIs", icon: BarChart3, path: "/admin/usage" }`
+
+### Resumo de arquivos
+
+| Arquivo | Alteração |
+|---------|-----------|
+| Migração SQL | Criar tabela `api_usage_logs` com RLS |
+| `src/pages/Matching.tsx` | Adicionar `logApiUsage()` após cada invoke |
+| `src/pages/Strategy.tsx` | Adicionar log para ai-analyze/strategy |
+| `src/pages/Risk.tsx` | Adicionar log para ai-analyze/risk |
+| `src/pages/Contracts.tsx` | Adicionar log para ai-analyze/contract |
+| `src/pages/DueDiligence.tsx` | Adicionar log para ai-analyze/due-diligence |
+| `src/components/DeepDiveDialog.tsx` | Adicionar log para deep-dive |
+| `src/pages/AdminUsage.tsx` | Nova página com painel de consumo |
+| `src/App.tsx` | Adicionar rota /admin/usage |
+| `src/components/layout/AppSidebar.tsx` | Adicionar link no menu admin |
 
