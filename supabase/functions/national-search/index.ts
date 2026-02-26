@@ -270,8 +270,7 @@ serve(async (req) => {
         e.situacao_cadastral,
         em.razao_social,
         em.capital_social,
-        em.porte_empresa,
-        em.opcao_pelo_simples
+        em.porte_empresa
       FROM estabelecimentos e
       INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
       ${whereClause}
@@ -304,8 +303,8 @@ serve(async (req) => {
         state: row.uf || null,
         city: cityName,
         size: mapPorteToSize(row.porte_empresa),
-        revenue: estimateRevenue(row.opcao_pelo_simples, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial),
-        ebitda: estimateEbitda(estimateRevenue(row.opcao_pelo_simples, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial), row.cnae_fiscal_principal),
+        revenue: estimateRevenue(null, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial),
+        ebitda: estimateEbitda(estimateRevenue(null, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial), row.cnae_fiscal_principal),
         cash_flow: null,
         debt: null,
         risk_level: "Medium",
