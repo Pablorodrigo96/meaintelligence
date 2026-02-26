@@ -1,55 +1,72 @@
 
 
-## Plano: Corrigir erro `column em.opcao_pelo_simples does not exist`
+## Plano: Corrigir Lusha para funcionar sem decisores Apollo (usar sócios como fallback)
 
 ### Problema
 
-A busca de compradores está falhando com erro 500 porque a query SQL referencia `em.opcao_pelo_simples` na tabela `empresas`, mas essa coluna não existe nessa tabela. Na base da Receita Federal, a informação sobre Simples Nacional geralmente fica em uma tabela separada chamada `simples`.
+O botão "Enriquecer com Lusha" bloqueia com a mensagem "Sem decisores" porque o Apollo retornou erro 429 (rate limit: 50 chamadas/minuto) para todas as empresas, então `decision_makers` está vazio no `ai_analysis`. Porém, o enriquecimento de contato (BrasilAPI/Perplexity) já trouxe dados de **sócios** (`contact_info.owners`) com nomes e cargos — esses podem ser usados como fallback.
 
 ### Causa raiz
 
-Na linha 274 do `national-search/index.ts`, a query seleciona `em.opcao_pelo_simples` da tabela `empresas` (alias `em`), mas essa coluna não pertence a essa tabela.
-
-### Solução
-
-Remover a referência a `opcao_pelo_simples` da query SQL e ajustar a lógica de estimativa de receita para funcionar sem esse dado. A coluna não é crítica — ela é usada apenas como "camada 1" na função `estimateRevenue` para identificar empresas do Simples Nacional. Sem ela, o sistema usará as camadas 2 e 3 (baseadas em porte e capital social), que já são suficientes para estimar receita.
+1. **Apollo rate-limited**: O sistema envia 200 empresas em batches de 10 com apenas 500ms de delay, excedendo o limite de 50 req/min da Apollo. Resultado: 0/200 enriquecidas, `decision_makers` vazio para todas.
+2. **Lusha bloqueada**: A função `enrichWithLusha` exige `decision_makers` do Apollo e não tem fallback para os sócios já disponíveis via `contact_info.owners`.
 
 ### Alterações
 
-#### 1. `supabase/functions/national-search/index.ts` — Query SQL (linha 274)
+#### 1. `src/pages/Matching.tsx` — Fallback para sócios no `enrichWithLusha` (~linha 351)
 
-Remover `em.opcao_pelo_simples` do SELECT:
-
-```sql
--- ANTES:
-em.porte_empresa,
-em.opcao_pelo_simples
-
--- DEPOIS:
-em.porte_empresa
-```
-
-#### 2. `supabase/functions/national-search/index.ts` — Mapeamento de resultados (linha ~309)
-
-Passar `null` em vez de `row.opcao_pelo_simples` para `estimateRevenue`:
+Quando `decision_makers` do Apollo estiver vazio, usar `contact_info.owners` como fonte alternativa:
 
 ```typescript
-// ANTES:
-revenue: estimateRevenue(row.opcao_pelo_simples, row.porte_empresa, ...)
+let decisionMakers = currentAnalysis.decision_makers || [];
 
-// DEPOIS:
-revenue: estimateRevenue(null, row.porte_empresa, ...)
+// Fallback: usar sócios do contact_info se não houver decisores Apollo
+if (decisionMakers.length === 0 && currentAnalysis.contact_info?.owners?.length > 0) {
+  decisionMakers = currentAnalysis.contact_info.owners.map((owner: any) => ({
+    name: owner.name,
+    title: owner.role || "Sócio",
+    linkedin_url: owner.linkedin || null,
+  }));
+}
+
+if (decisionMakers.length === 0) {
+  toast({ title: "Sem decisores", description: "...", variant: "destructive" });
+  return;
+}
 ```
 
-### Impacto
+#### 2. `supabase/functions/apollo-enrich/index.ts` — Respeitar rate limit da Apollo (~linha 68)
 
-- A estimativa de receita para empresas do Simples Nacional será um pouco menos precisa (usará a lógica de porte/capital social em vez do teto do Simples), mas a busca voltará a funcionar
-- Todas as outras funcionalidades (scoring, Apollo, Lusha, Shortlist) não são afetadas
+Reduzir `BATCH_SIZE` de 10 para 5 e aumentar delay entre batches de 500ms para 1500ms (garante < 50 req/min):
+
+```typescript
+const BATCH_SIZE = 5;
+// ...
+await delay(1500);
+```
+
+### Detalhes técnicos
+
+**Fallback de dados:**
+```text
+Prioridade 1: decision_makers (Apollo) → nome, cargo, LinkedIn
+Prioridade 2: contact_info.owners (BrasilAPI/Perplexity) → nome, cargo (sócio), LinkedIn
+```
+
+**Rate limit Apollo corrigido:**
+```text
+ANTES: 10 empresas/batch × 2 batches/seg = 200 req em ~10s (excede 50/min)
+DEPOIS: 5 empresas/batch × 1 batch/1.5s = ~200 req/min... ainda alto
+
+Melhor: BATCH_SIZE=5, delay=6000ms → 5 req/6s = 50 req/min (exato no limite)
+```
+
+Ajuste final: `BATCH_SIZE = 5` e `delay(6500)` para ficar seguro abaixo de 50/min.
 
 ### Resumo
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `national-search/index.ts` linha 274 | Remover `em.opcao_pelo_simples` do SELECT |
-| `national-search/index.ts` linha ~309 | Passar `null` para `opcaoSimples` no `estimateRevenue` |
+| `src/pages/Matching.tsx` ~linha 351 | Fallback: usar `contact_info.owners` quando `decision_makers` vazio |
+| `supabase/functions/apollo-enrich/index.ts` ~linha 68 | `BATCH_SIZE=5`, `delay(6500)` para respeitar rate limit |
 
