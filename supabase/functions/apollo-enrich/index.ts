@@ -60,7 +60,7 @@ serve(async (req) => {
     }
 
     const enriched: any[] = [];
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 5;
 
     for (let i = 0; i < companies.length; i += BATCH_SIZE) {
       const batch = companies.slice(i, i + BATCH_SIZE);
@@ -138,7 +138,7 @@ serve(async (req) => {
 
       // Rate limit delay between batches
       if (i + BATCH_SIZE < companies.length) {
-        await delay(500);
+        await delay(6500);
       }
     }
 
