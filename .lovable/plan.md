@@ -1,93 +1,78 @@
 
 
-## Plano: Corrigir exibição de Faturamento, EBITDA e Funcionários nos cards
+## Plano: Melhorar fluxo de funil — card estático + ações inline + Shortlist completa
 
-### Problema
+### Problema atual
 
-1. **Faturamento estimado existe mas não aparece**: O `national-search` estima o faturamento corretamente, mas o card mostra apenas Capital Social/CNAE quando presentes — escondendo faturamento e EBITDA (linhas 2944-2965).
-2. **EBITDA não é salvo**: Na inserção de empresas (linha 706), o campo `ebitda` não é incluído, então fica `null` no banco.
-3. **Funcionários estimados não aparecem**: O badge de funcionários só aparece após enriquecimento Apollo. A estimativa pode ser derivada do faturamento/setor.
+1. **Card "some" ao clicar Shortlist**: O `queryClient.invalidateQueries` causa re-render completo da lista, e o card pode mudar de posição ou o scroll resetar — dando a impressão de "sumir".
+2. **Ida e volta entre abas**: O usuário precisa ir para a aba Shortlist para enriquecer com Lusha, depois voltar para os 400 resultados para continuar trabalhando — fluxo confuso.
+3. **Falta de fluxo de funil**: O ideal é: Enriquecer → Analisar IA → card fica no lugar → clicar Shortlist → card sai dos resultados e vai para a aba Shortlist com todas as informações.
 
-### Alterações
+### Solução
 
-#### 1. `src/pages/Matching.tsx` — Salvar EBITDA na inserção (linha ~706)
+#### 1. Card não desaparece ao enriquecer/analisar — só sai ao clicar Shortlist
 
-Adicionar `ebitda: company.ebitda` ao insert de empresas:
+Atualizar o estado local **otimisticamente** sem invalidar a query inteira quando o status muda para "saved". O card muda o visual (badge verde "Shortlist ✓") mas permanece na posição até o próximo ciclo.
 
+**Alteração em `recordFeedback`** (~linha 780):
+- Ao invés de `queryClient.invalidateQueries`, usar `queryClient.setQueryData` para atualizar o match localmente (otimistic update)
+- Isso evita o re-render que causa o "sumiço"
+
+#### 2. Botão Lusha direto no card dos resultados
+
+Adicionar o botão "Enriquecer com Lusha" diretamente no card expandido da aba de Resultados (não apenas na Shortlist). Assim o usuário pode fazer todo o enriquecimento sem trocar de aba.
+
+**Alteração na seção expandida do card** (~linha 3060):
+- Adicionar botão Lusha ao lado de "Re-analisar IA" e "Enriquecer" quando `m.status === "saved"`
+
+#### 3. Filtrar cards salvos dos resultados após shortlist
+
+Quando o usuário clica "Shortlist", o card recebe o badge verde e permanece visível por 2 segundos (para feedback visual), depois é filtrado da lista de resultados. O `displayMatches` no tab de resultados passa a excluir `status === "saved"` por padrão, com opção de ver todos via filtro.
+
+**Alteração em `displayMatches`** (linha 1001):
 ```typescript
-// ANTES (linha 706):
-revenue: company.revenue, description: company.description,
-
-// DEPOIS:
-revenue: company.revenue, ebitda: company.ebitda, description: company.description,
+const displayMatches = useMemo(() => {
+  let result = [...matches];
+  // Por padrão na aba results, excluir salvos (foram pra Shortlist)
+  if (statusFilter === "all") {
+    result = result.filter(m => m.status !== "saved" && m.status !== "dismissed");
+  } else if (statusFilter !== "all") {
+    result = result.filter(m => m.status === statusFilter);
+  }
+  // ... resto dos filtros
+}, [...]);
 ```
 
-#### 2. `src/pages/Matching.tsx` — Mostrar Faturamento + EBITDA + Capital Social + CNAE juntos (linhas 2942-2965)
+**Alteração no filtro de Status** (linha 2804):
+- Adicionar opção "Ativos" como default (novos + em análise)
+- Renomear "Todos" para incluir salvos+dispensados
 
-Remover a lógica condicional que esconde receita/EBITDA quando capital/CNAE existem. Exibir **tudo junto**:
+#### 4. Shortlist com card completo e todas as ações
 
-```typescript
-{/* Mini stats row */}
-<div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
-  <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
-  <span>·</span>
-  <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
-  {(() => {
-    const capital = extractCapitalFromDescription(m.companies?.description ?? null);
-    const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
-    return (
-      <>
-        {capital && <><span>·</span><span>Capital: {formatCurrency(capital)}</span></>}
-        {cnae && <><span>·</span><span className="font-mono">CNAE: {cnae}</span></>}
-      </>
-    );
-  })()}
-  <span>·</span>
-  <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
-    {completeness}% dados
-  </Badge>
-</div>
+A aba Shortlist já tem cards razoáveis. Vamos garantir que mostrem **tudo**: Receita, EBITDA, funcionários, badges, seção de contato expandida, sócios, e botão Lusha — exatamente como o card expandido dos resultados.
+
+### Alterações no arquivo
+
+| Local | Alteração |
+|-------|-----------|
+| `Matching.tsx` ~linha 757 | `updateStatus`: update otimístico via `setQueryData` em vez de `invalidateQueries` |
+| `Matching.tsx` ~linha 1001 | `displayMatches`: excluir `saved` e `dismissed` por padrão nos resultados |
+| `Matching.tsx` ~linha 2804 | Filtro de status: default "Ativos" (new), opção "Todos" para ver tudo |
+| `Matching.tsx` ~linha 3060 | Card expandido: adicionar botão Lusha inline quando status=saved |
+| `Matching.tsx` ~linha 3417 | Shortlist tab: garantir card completo com todas as informações e ações |
+
+### Fluxo após a mudança
+
+```text
+Resultados (400 leads)
+  ├─ Card: Enriquecer → dados de contato aparecem no card
+  ├─ Card: Análise IA → insights aparecem no card
+  ├─ Card: clica Shortlist → badge verde, card sai da lista
+  └─ Card: clica Ignorar → card sai da lista
+
+Shortlist (leads selecionados)
+  ├─ Card completo com TODAS as informações
+  ├─ Botão Lusha → enriquece inline
+  └─ Pode remover da shortlist → volta para Resultados
 ```
-
-#### 3. `src/pages/Matching.tsx` — Estimar funcionários a partir do faturamento/setor
-
-Quando `employee_count` do Apollo não estiver disponível, calcular uma estimativa baseada no faturamento e no benchmark setorial (mesma lógica do `SECTOR_BENCHMARKS`):
-
-```typescript
-// No render do card, após parsedData:
-const estimatedEmployees = (() => {
-  if (parsedData.employee_count && parsedData.employee_count > 0) return parsedData.employee_count;
-  const rev = m.companies?.revenue;
-  if (!rev || rev <= 0) return null;
-  const benchmarks: Record<string, number> = {
-    "Technology": 500000, "Retail": 200000, "Manufacturing": 250000,
-    "Healthcare": 180000, "Logistics": 200000, "Finance": 400000,
-    "Education": 120000, "Real Estate": 250000, "Energy": 350000,
-    "Telecom": 300000, "Agribusiness": 300000, "Other": 150000,
-  };
-  const revPerEmp = benchmarks[m.companies?.sector || "Other"] || 150000;
-  return Math.max(1, Math.round(rev / revPerEmp));
-})();
-```
-
-Badge atualizado para mostrar funcionários (estimados ou Apollo):
-
-```typescript
-{estimatedEmployees && estimatedEmployees > 0 && (
-  <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
-    <Users className="w-2.5 h-2.5 mr-0.5" />
-    ~{estimatedEmployees} func.{parsedData.apollo_enriched ? "" : " (est.)"}
-  </Badge>
-)}
-```
-
-### Resumo
-
-| Arquivo | Alteração |
-|---------|-----------|
-| `src/pages/Matching.tsx` linha 706 | Adicionar `ebitda: company.ebitda` ao insert |
-| `src/pages/Matching.tsx` linhas 2942-2965 | Mostrar faturamento + EBITDA + capital + CNAE juntos (sem esconder) |
-| `src/pages/Matching.tsx` cards | Estimar e exibir número de funcionários a partir de faturamento/setor |
-
-Empresas já salvas sem EBITDA continuarão mostrando N/A até uma nova busca. Novas buscas salvarão o EBITDA corretamente.
 
