@@ -308,7 +308,7 @@ export default function Matching() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("criteria");
   const [expandedMatch, setExpandedMatch] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
   const [minScoreFilter, setMinScoreFilter] = useState([0]);
   const [deepDiveOpen, setDeepDiveOpen] = useState(false);
   const [investorProfile, setInvestorProfile] = useState("Moderado");
@@ -390,7 +390,11 @@ export default function Matching() {
         ai_analysis: JSON.stringify(enriched),
       }).eq("id", match.id);
 
-      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      // Optimistic update for Lusha enrichment
+      queryClient.setQueryData(["matches"], (old: MatchResult[] | undefined) => {
+        if (!old) return old;
+        return old.map(m => m.id === match.id ? { ...m, ai_analysis: JSON.stringify(enriched) } : m);
+      });
       const foundCount = (data.contacts || []).filter((c: any) => c.lusha_found).length;
       toast({ title: "Lusha concluído", description: `${foundCount}/${decisionMakers.length} decisores enriquecidos com dados de contato.` });
     } catch (e: any) {
@@ -754,7 +758,11 @@ export default function Matching() {
 
   const updateStatus = async (id: string, status: string) => {
     await supabase.from("matches").update({ status }).eq("id", id);
-    queryClient.invalidateQueries({ queryKey: ["matches"] });
+    // Optimistic update: update local cache instead of full refetch
+    queryClient.setQueryData(["matches"], (old: MatchResult[] | undefined) => {
+      if (!old) return old;
+      return old.map(m => m.id === id ? { ...m, status } : m);
+    });
   };
 
   // Record user feedback for future neural model training
@@ -843,7 +851,11 @@ export default function Matching() {
         ai_analysis: JSON.stringify(enriched),
         compatibility_score: newScore,
       }).eq("id", match.id);
-      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      // Optimistic update for AI analysis
+      queryClient.setQueryData(["matches"], (old: MatchResult[] | undefined) => {
+        if (!old) return old;
+        return old.map(m2 => m2.id === match.id ? { ...m2, ai_analysis: JSON.stringify(enriched), compatibility_score: newScore } : m2);
+      });
       toast({ title: "Análise IA concluída!", description: `${match.companies?.name} enriquecida com sucesso.` });
     } catch (e: any) {
       toast({ title: "Erro na análise IA", description: e.message, variant: "destructive" });
@@ -873,7 +885,11 @@ export default function Matching() {
       const currentAnalysis = (() => { try { return JSON.parse(match.ai_analysis || "{}"); } catch { return {}; } })();
       const enriched = { ...currentAnalysis, contact_info: data };
       await supabase.from("matches").update({ ai_analysis: JSON.stringify(enriched) }).eq("id", match.id);
-      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      // Optimistic update instead of full refetch
+      queryClient.setQueryData(["matches"], (old: MatchResult[] | undefined) => {
+        if (!old) return old;
+        return old.map(m => m.id === match.id ? { ...m, ai_analysis: JSON.stringify(enriched) } : m);
+      });
       toast({ title: "Enriquecimento concluído!", description: `${data.sources?.length || 0} fontes consultadas · ${data.owners?.length || 0} sócios encontrados` });
     } catch (e: any) {
       toast({ title: "Erro no enriquecimento", description: e.message, variant: "destructive" });
@@ -1000,7 +1016,12 @@ export default function Matching() {
 
   const displayMatches = useMemo(() => {
     let result = [...matches];
-    if (statusFilter !== "all") result = result.filter((m) => m.status === statusFilter);
+    // Default "active" filter: exclude saved and dismissed from results tab
+    if (statusFilter === "active") {
+      result = result.filter((m) => m.status !== "saved" && m.status !== "dismissed");
+    } else if (statusFilter !== "all") {
+      result = result.filter((m) => m.status === statusFilter);
+    }
     result = result.filter((m) => Number(m.compatibility_score) >= minScoreFilter[0]);
     if (webFilterMode !== "all") {
       result = result.filter((m) => {
@@ -2802,6 +2823,7 @@ export default function Matching() {
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-28 h-8"><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="active">Ativos</SelectItem>
                       <SelectItem value="all">Todos</SelectItem>
                       <SelectItem value="new">Novos</SelectItem>
                       <SelectItem value="saved">Salvos</SelectItem>
@@ -3087,8 +3109,28 @@ export default function Matching() {
                                  }}
                                >
                                  {isEnriching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Users className="w-3 h-3" />}
-                                 {contactInfo ? "Re-enriquecer" : "Enriquecer"}
+                                {contactInfo ? "Re-enriquecer" : "Enriquecer"}
                                </Button>
+                               {m.status === "saved" && (
+                                 <Button
+                                   variant={parsedData.lusha_enriched ? "outline" : "default"}
+                                   size="sm"
+                                   className="h-7 text-xs gap-1"
+                                   disabled={lushaEnrichingMatch === m.id}
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     enrichWithLusha(m);
+                                   }}
+                                 >
+                                   {lushaEnrichingMatch === m.id ? (
+                                     <><Loader2 className="w-3 h-3 animate-spin" />Lusha...</>
+                                   ) : parsedData.lusha_enriched ? (
+                                     <><RotateCcw className="w-3 h-3" />Re-Lusha</>
+                                   ) : (
+                                     <><Phone className="w-3 h-3" />Lusha</>
+                                   )}
+                                 </Button>
+                               )}
                                {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                             </div>
                           </div>
@@ -3500,6 +3542,34 @@ export default function Matching() {
                                   <><Phone className="w-3.5 h-3.5" />Enriquecer com Lusha</>
                                 )}
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`gap-1.5 text-xs ${parsedData.ai_enriched ? "border-accent/40 text-accent hover:bg-accent/10" : "border-primary/40 text-primary hover:bg-primary/10"}`}
+                                disabled={!!aiEnrichingMatch}
+                                onClick={() => analyzeOneCompany(m)}
+                              >
+                                {aiEnrichingMatch === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                {parsedData.ai_enriched ? "Re-analisar IA" : "Análise IA ✦"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`gap-1.5 text-xs ${contactInfo ? "border-success/40 text-success hover:bg-success/10" : "border-warning/40 text-warning hover:bg-warning/10"}`}
+                                disabled={!!enrichingMatch}
+                                onClick={() => enrichOneCompany(m)}
+                              >
+                                {enrichingMatch === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Users className="w-3.5 h-3.5" />}
+                                {contactInfo ? "Re-enriquecer" : "Enriquecer"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1.5 text-xs text-destructive hover:text-destructive"
+                                onClick={() => updateStatus(m.id, "new")}
+                              >
+                                <X className="w-3.5 h-3.5" />Remover
+                              </Button>
                             </div>
                           </div>
                         </CardHeader>
@@ -3581,24 +3651,105 @@ export default function Matching() {
                             </div>
                           )}
 
-                          {/* Existing enrichment contacts */}
+                          {/* Sócios e Contato (from enrichment) */}
                           {contactInfo && (
-                            <div className="bg-muted/30 rounded-lg p-3 text-sm">
-                              <p className="font-medium mb-1 flex items-center gap-1"><UserCheck className="w-3.5 h-3.5 text-primary" />Contatos IA (Perplexity)</p>
-                              <div className="space-y-1 text-xs">
-                                {contactInfo.phones?.map((p: any, i: number) => (
-                                  <a key={i} href={`tel:${typeof p === "string" ? p : p.number}`} className="flex items-center gap-1 text-primary hover:underline">
-                                    <Phone className="w-3 h-3" />{typeof p === "string" ? p : p.number}
-                                  </a>
-                                ))}
-                                {contactInfo.emails?.map((e: any, i: number) => (
-                                  <a key={i} href={`mailto:${typeof e === "string" ? e : e.email}`} className="flex items-center gap-1 text-primary hover:underline">
-                                    <Mail className="w-3 h-3" />{typeof e === "string" ? e : e.email}
-                                  </a>
-                                ))}
+                            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-display font-semibold text-sm flex items-center gap-2">
+                                  <Users className="w-4 h-4 text-primary" />Sócios e Contato
+                                </h4>
+                                <div className="flex gap-1">
+                                  {contactInfo.sources?.map((src: string) => (
+                                    <Badge key={src} variant="outline" className="text-[10px]">
+                                      {src === "banco_nacional" ? "BD Nacional" : src === "brasilapi" ? "BrasilAPI" : src === "perplexity" ? "Web" : src}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                              {contactInfo.owners && contactInfo.owners.length > 0 && (
+                                <div className="space-y-2">
+                                  {contactInfo.owners.map((owner: any, oi: number) => (
+                                    <div key={oi} className="rounded-md border bg-background px-3 py-2">
+                                      <div className="flex items-center justify-between">
+                                        <div>
+                                          <span className="text-sm font-medium">{owner.name}</span>
+                                          <span className="text-xs text-muted-foreground ml-2">{owner.role}</span>
+                                        </div>
+                                        <div className="flex gap-1.5">
+                                          {owner.linkedin && (
+                                            <a href={owner.linkedin} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80">
+                                              <Linkedin className="w-4 h-4" />
+                                            </a>
+                                          )}
+                                          {owner.instagram && (
+                                            <a href={owner.instagram.startsWith("http") ? owner.instagram : `https://instagram.com/${owner.instagram.replace("@", "")}`} target="_blank" rel="noopener noreferrer" className="text-pink-500 hover:text-pink-400">
+                                              <Instagram className="w-4 h-4" />
+                                            </a>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                                {contactInfo.contact?.phones?.length > 0 && (
+                                  <div className="flex items-center gap-2">
+                                    <Phone className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                    <span className="text-muted-foreground">{contactInfo.contact.phones.join(" · ")}</span>
+                                  </div>
+                                )}
+                                {contactInfo.contact?.email && (
+                                  <div className="flex items-center gap-2">
+                                    <Mail className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                    <a href={`mailto:${contactInfo.contact.email}`} className="text-primary hover:underline text-sm">{contactInfo.contact.email}</a>
+                                  </div>
+                                )}
+                                {contactInfo.contact?.website && (
+                                  <div className="flex items-center gap-2">
+                                    <Globe className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                    <a href={contactInfo.contact.website.startsWith("http") ? contactInfo.contact.website : `https://${contactInfo.contact.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm truncate">{contactInfo.contact.website}</a>
+                                  </div>
+                                )}
+                                {contactInfo.contact?.linkedin_company && (
+                                  <div className="flex items-center gap-2">
+                                    <Linkedin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                    <a href={contactInfo.contact.linkedin_company} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm truncate">LinkedIn da Empresa</a>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
+
+                          {/* Strengths & Weaknesses */}
+                          {(parsedData.strengths.length > 0 || parsedData.weaknesses.length > 0) && (
+                            <div className="grid grid-cols-2 gap-3">
+                              {parsedData.strengths.length > 0 && (
+                                <div className="rounded-lg border border-success/30 bg-success/5 p-3">
+                                  <h4 className="font-semibold text-xs mb-2 text-success flex items-center gap-1"><ThumbsUp className="w-3 h-3" />Pontos Fortes</h4>
+                                  <ul className="space-y-1">
+                                    {parsedData.strengths.map((s, i) => <li key={i} className="text-xs text-muted-foreground">• {s}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                              {parsedData.weaknesses.length > 0 && (
+                                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                                  <h4 className="font-semibold text-xs mb-2 text-destructive flex items-center gap-1"><ThumbsDown className="w-3 h-3" />Pontos Fracos</h4>
+                                  <ul className="space-y-1">
+                                    {parsedData.weaknesses.map((w, i) => <li key={i} className="text-xs text-muted-foreground">• {w}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Company detail grid */}
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-lg border p-3"><p className="text-muted-foreground">Receita</p><p className="font-semibold">{formatCurrency(m.companies?.revenue ?? null)}</p></div>
+                            <div className="rounded-lg border p-3"><p className="text-muted-foreground">EBITDA</p><p className="font-semibold">{formatCurrency(m.companies?.ebitda ?? null)}</p></div>
+                            <div className="rounded-lg border p-3"><p className="text-muted-foreground">Tamanho</p><p className="font-semibold">{m.companies?.size || "N/A"}</p></div>
+                            <div className="rounded-lg border p-3"><p className="text-muted-foreground">Risco</p><p className="font-semibold">{m.companies?.risk_level || "N/A"}</p></div>
+                          </div>
                         </CardContent>
                       </Card>
                     );
