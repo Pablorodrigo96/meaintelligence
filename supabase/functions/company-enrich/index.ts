@@ -137,7 +137,7 @@ Retorne APENAS um JSON válido neste formato exato, sem markdown:
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "sonar",
+            model: "sonar-pro",
             messages: [
               { role: "system", content: "Você é um assistente de pesquisa empresarial. Retorne APENAS JSON válido, sem markdown, sem explicação." },
               { role: "user", content: prompt },
@@ -207,6 +207,65 @@ Retorne APENAS um JSON válido neste formato exato, sem markdown:
         }
       } catch (e) {
         console.error("Layer 3 (Perplexity) error:", e);
+      }
+    }
+
+    // ── CAMADA 3b: Busca dedicada de LinkedIn por sócio (sonar-pro) ──
+    if (PERPLEXITY_API_KEY && owners.length > 0) {
+      const ownersToSearch = owners.filter(o => !o.linkedin && o.name.length > 3).slice(0, 5);
+      const location = city ? `${city}, ${state}` : state || "Brasil";
+
+      for (const owner of ownersToSearch) {
+        try {
+          const searchPrompt = `Encontre o perfil do LinkedIn de "${owner.name}", que é ${owner.role} da empresa "${company_name}" em ${location}.
+Busque por "${owner.name} ${company_name} LinkedIn".
+Retorne APENAS um JSON válido: {"linkedin": "url do perfil ou null", "instagram": "@handle ou null"}`;
+
+          const ownerRes = await fetch("https://api.perplexity.ai/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "sonar-pro",
+              messages: [
+                { role: "system", content: "Você é um assistente de pesquisa. Retorne APENAS JSON válido, sem markdown." },
+                { role: "user", content: searchPrompt },
+              ],
+              temperature: 0.1,
+              max_tokens: 300,
+            }),
+          });
+
+          if (ownerRes.ok) {
+            const ownerData = await ownerRes.json();
+            const ownerContent = ownerData.choices?.[0]?.message?.content || "";
+            try {
+              const cleaned = ownerContent.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+              const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.linkedin && parsed.linkedin.includes("linkedin.com/in/")) {
+                  owner.linkedin = parsed.linkedin;
+                }
+                if (parsed.instagram) {
+                  owner.instagram = parsed.instagram;
+                }
+              }
+            } catch (_) { /* ignore parse error */ }
+          }
+        } catch (e) {
+          console.error(`LinkedIn search error for ${owner.name}:`, e);
+        }
+      }
+    }
+
+    // ── Fallback: gerar URL de busca LinkedIn para sócios sem perfil ──
+    for (const owner of owners) {
+      if (!owner.linkedin) {
+        owner.linkedin = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(owner.name + " " + company_name)}`;
+        owner.linkedin_is_search = true;
       }
     }
 
