@@ -1,76 +1,78 @@
 
 
-## Plano: Criar Apollo Enrich + Integrar no Matching
+## Plano: Badges Apollo + Persistência dos dados de enriquecimento
 
-### Estado atual
-- A função `apollo-enrich` **não existe** ainda — precisa ser criada
-- O secret `APOLLO_API_KEY` **não está configurado** — precisa ser adicionado
-- A linha 1092 do Matching.tsx ainda faz `revenue / 2` (resquício da fórmula antiga)
+### Problema identificado
+
+Os dados da Apollo (`apollo_enriched`, `employee_count`, `apollo_industry`, `decision_makers`) são atribuídos aos objetos em memória durante o Step 2.5, mas **não são persistidos** no `ai_analysis` JSON quando os matches são salvos no banco (linhas 1243-1254). Portanto, ao recarregar a página, esses dados se perdem e os badges nunca aparecem.
 
 ### Alterações
 
-#### 1. Secret `APOLLO_API_KEY`
-Solicitar ao usuário a API key da Apollo.io.
+#### 1. Persistir dados Apollo no `ai_analysis` (linhas 1243-1254)
 
-#### 2. Nova Edge Function `supabase/functions/apollo-enrich/index.ts`
-- Recebe lista de empresas (nome, estado, cidade, email_domain)
-- Para cada empresa, chama `POST https://api.apollo.io/api/v1/mixed_people/search` com **`X-Api-Key` no header** (não na URL)
-- Filtra por `person_seniorities: ['owner', 'founder', 'c_suite', 'director']`
-- Captura `organization.estimated_num_employees` e `organization.industry`
-- Calcula receita: `employees × multiplicador_setor`
-- Batch de 10 empresas com delay de 500ms entre batches
-- Retorna lista enriquecida
+Ao montar o JSON de `ai_analysis` para cada match, incluir os campos Apollo do objeto `company`:
 
-Multiplicadores:
-| Setor | R$/funcionário |
-|-------|---------------|
-| Tech/SaaS | 500.000 |
-| Indústria | 400.000 |
-| Serviços/Varejo | 180.000 |
-| Outros | 200.000 |
+```typescript
+ai_analysis: JSON.stringify({
+  ...existingFields,
+  apollo_enriched: company.apollo_enriched || false,
+  employee_count: company.employee_count || null,
+  apollo_industry: company.apollo_industry || null,
+  decision_makers: company.decision_makers || [],
+})
+```
 
-#### 3. `supabase/config.toml`
-Adicionar `[functions.apollo-enrich] verify_jwt = false`
+#### 2. Atualizar `parseAnalysis` (linha 918)
 
-#### 4. `src/pages/Matching.tsx`
-- **Step 2.5** (após deduplicação, antes do scoring ~L1088): chamar `apollo-enrich` com top 200, mergear `revenue` de volta
-- **Scoring** (~L1092): substituir `revenue / 2` por uso direto de `buyer.revenue` no cálculo de `capacity_fit`
+Adicionar extração de `apollo_enriched`, `employee_count`, `apollo_industry` do JSON parseado para disponibilizar na renderização dos cards.
+
+#### 3. Adicionar badges visuais nos cards (após linha 2844)
+
+Na área de badges dos cards de resultado (entre as badges existentes), adicionar:
+
+- **Badge "Apollo"** — ícone Zap em roxo, visível quando `apollo_enriched === true`
+- **Badge de funcionários** — ícone Users com contagem (ex: "45 func."), visível quando `employee_count > 0`
+- **Badge de setor Apollo** — texto do setor Apollo quando disponível e diferente do setor já exibido
 
 ### Detalhes técnicos
 
-Header da Apollo (conforme instrução do usuário):
-```typescript
-const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "X-Api-Key": APOLLO_API_KEY,  // No header, não na URL
-  },
-  body: JSON.stringify(searchBody),
-});
+Localização dos badges no código:
+```
+Linha 2841-2845: Badge "Enriquecida" (contactInfo)
+→ APÓS esta badge, adicionar as 3 novas badges Apollo
 ```
 
-Correção do scoring:
+Dados lidos do `ai_analysis` parseado (não do `m.companies`):
 ```typescript
-// ANTES:
-const capitalSocial = buyer.revenue ? buyer.revenue / 2 : null;
-
-// DEPOIS:
-const buyerRevenue = buyer.revenue || 0;
-let capacity_fit = 50;
-if (buyerRevenue > 0 && askingPrice > 0) {
-  const ratio = buyerRevenue / askingPrice;
-  if (ratio >= 10) capacity_fit = 95;
-  else if (ratio >= 5) capacity_fit = 85;
-  else if (ratio >= 2) capacity_fit = 70;
-  else if (ratio >= 1) capacity_fit = 55;
-  else capacity_fit = 30;
-}
+const apolloEnriched = parsedData.apollo_enriched;
+const employeeCount = parsedData.employee_count;
+const apolloIndustry = parsedData.apollo_industry;
 ```
 
-### Sequência de implementação
-1. Solicitar `APOLLO_API_KEY` ao usuário (aguardar antes de prosseguir)
-2. Criar `apollo-enrich/index.ts`
-3. Atualizar `Matching.tsx` (step 2.5 + scoring)
-4. Deploy da edge function
+Renderização:
+```tsx
+{apolloEnriched && (
+  <Badge className="text-[10px] bg-violet-500/15 text-violet-600 border-violet-500/30 border">
+    <Zap className="w-2.5 h-2.5 mr-0.5" />Apollo
+  </Badge>
+)}
+{employeeCount > 0 && (
+  <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
+    <Users className="w-2.5 h-2.5 mr-0.5" />{employeeCount} func.
+  </Badge>
+)}
+{apolloIndustry && (
+  <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+    {apolloIndustry}
+  </Badge>
+)}
+```
+
+### Resumo de alterações
+
+| Arquivo | Linha(s) | Alteração |
+|---------|----------|-----------|
+| `Matching.tsx` | ~1243-1254 | Persistir `apollo_enriched`, `employee_count`, `apollo_industry`, `decision_makers` no `ai_analysis` JSON |
+| `Matching.tsx` | ~918 | Extrair campos Apollo no `parseAnalysis` |
+| `Matching.tsx` | ~2844 | Adicionar 3 badges visuais: Apollo, funcionários, setor |
 
