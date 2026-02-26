@@ -22,6 +22,7 @@ import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Responsi
 import { BRAZILIAN_STATES, BRAZILIAN_CITIES, findCity, getCitiesByState } from "@/data/brazilian-cities";
 import { haversineDistance } from "@/lib/geo";
 import { DeepDiveDialog } from "@/components/DeepDiveDialog";
+import { logApiUsage } from "@/lib/logApiUsage";
 
 const sectors = [
   { value: "Technology", label: "Tecnologia" },
@@ -379,6 +380,7 @@ export default function Matching() {
       });
 
       if (error) throw error;
+      if (user?.id) logApiUsage(user.id, "lusha", "enrich");
 
       const enriched = {
         ...currentAnalysis,
@@ -567,6 +569,7 @@ export default function Matching() {
         });
         if (nationalError) throw new Error(`Erro ao buscar Base Nacional: ${nationalError.message}`);
         if (nationalData?.error) throw new Error(`Erro na Base Nacional: ${nationalData.error}`);
+        if (user?.id) logApiUsage(user.id, "national-search", "search");
         const rawCompanies: any[] = nationalData?.companies || [];
         // Correção 3: Deduplicação frontend por cnpj_basico (primeiros 8 dígitos)
         // Garante que mesmo se o BD retornar duplicatas, o usuário vê 1 empresa por grupo
@@ -643,6 +646,7 @@ export default function Matching() {
           console.warn("Perplexity validation failed:", e);
           return { data: null };
         });
+        if (user?.id) logApiUsage(user.id, "perplexity", "validate");
         if (perplexityRes.data?.companies && Array.isArray(perplexityRes.data.companies)) {
           webValidatedNames = perplexityRes.data.companies;
         }
@@ -817,6 +821,7 @@ export default function Matching() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "match-single");
       const result = data?.result || data;
       // Update the match record with AI enrichment
       const enriched = {
@@ -882,6 +887,7 @@ export default function Matching() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "company-enrich", "enrich");
       const currentAnalysis = (() => { try { return JSON.parse(match.ai_analysis || "{}"); } catch { return {}; } })();
       const enriched = { ...currentAnalysis, contact_info: data };
       await supabase.from("matches").update({ ai_analysis: JSON.stringify(enriched) }).eq("id", match.id);
@@ -1122,6 +1128,7 @@ export default function Matching() {
       });
       if (aiError) throw new Error(`Erro na análise IA: ${aiError.message}`);
       if (aiData?.error) throw new Error(aiData.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "parse-seller-intent");
 
       const parsed = aiData?.result || aiData;
       const profiles: BuyerProfile[] = parsed.buyer_profiles || (Array.isArray(parsed) ? parsed : []);
@@ -1146,6 +1153,7 @@ export default function Matching() {
             limit: 500,
           },
         });
+        if (user?.id) logApiUsage(user.id, "national-search", "find-buyers");
         if (searchError) {
           console.warn(`Search error for profile ${profile.label}:`, searchError);
           continue;
@@ -1184,6 +1192,7 @@ export default function Matching() {
           })) },
         });
 
+        if (user?.id) logApiUsage(user.id, "apollo", "enrich");
         if (apolloData?.enriched) {
           for (const enriched of apolloData.enriched) {
             const match = topCandidates.find((c: any) => c.name === enriched.name);

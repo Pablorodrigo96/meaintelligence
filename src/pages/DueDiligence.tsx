@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, LayoutDashboard, CheckSquare, FolderOpen, FileBarChart, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { logApiUsage } from "@/lib/logApiUsage";
 import { DD_PLAYBOOK } from "@/data/dd-checklist-playbook";
 import DDDashboard from "@/components/dd/DDDashboard";
 import DDChecklist from "@/components/dd/DDChecklist";
@@ -162,6 +163,7 @@ export default function DueDiligence() {
         body: { type: "due-diligence", data: { company, documentText: `Document: ${doc?.file_name}` } },
       });
       if (error) throw error;
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "due-diligence-doc");
       await supabase.from("dd_documents" as any).update({ ai_analysis: data.result?.ai_report || JSON.stringify(data.result), status: "analyzed" }).eq("id", docId);
       queryClient.invalidateQueries({ queryKey: ["dd-documents", selectedCompany] });
       toast({ title: "Análise concluída" });
@@ -184,6 +186,7 @@ export default function DueDiligence() {
       });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "due-diligence-full");
       const result = data.result;
       const { error: insertErr } = await supabase.from("due_diligence_reports").insert({
         company_id: selectedCompany, user_id: user!.id,

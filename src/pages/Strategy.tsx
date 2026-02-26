@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, Target, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { logApiUsage } from "@/lib/logApiUsage";
 import { Progress } from "@/components/ui/progress";
 
 export default function Strategy() {
@@ -35,6 +36,7 @@ export default function Strategy() {
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "strategy", data: { transaction: { buyer_name: buyer.name, target_name: target.name }, buyer, target } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "strategy");
       setResult(data.result);
     },
     onSuccess: () => toast({ title: "Análise estratégica concluída" }),

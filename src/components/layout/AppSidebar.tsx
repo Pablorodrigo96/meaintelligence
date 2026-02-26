@@ -3,6 +3,7 @@ import {
   Building2,
   LayoutDashboard,
   Users,
+  BarChart3,
   Search,
   Shield,
   Calculator,
@@ -34,6 +35,7 @@ const navItems = [
 
 const adminItems = [
   { label: "Gestão de Usuários", icon: Users, path: "/admin/users" },
+  { label: "Consumo de APIs", icon: BarChart3, path: "/admin/usage" },
   { label: "Configurações", icon: Settings, path: "/admin/settings" },
 ];
 
