@@ -1055,7 +1055,7 @@ export default function Matching() {
           body: {
             mode: "find-buyers",
             cnae_prefixes: profile.cnae_prefixes,
-            target_state: profile.search_nationwide ? null : (sellerData.state || null),
+            target_state: profile.search_nationwide === true ? null : (sellerData.state || null),
             min_capital_social: profile.min_capital_social || (askingPrice > 0 ? askingPrice * 0.3 : 100_000),
             seller_asking_price: askingPrice || null,
             limit: 500,

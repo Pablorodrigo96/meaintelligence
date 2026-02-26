@@ -319,6 +319,18 @@ Considere 3 estratégias de busca:
 
 Para cada perfil, forneça CNAEs específicos (2 ou 4 dígitos) para busca na base de dados da Receita Federal.
 
+IMPORTANTE — AMPLIE A COBERTURA DE CNAEs:
+- Sempre inclua CNAEs de consultorias de gestão (7020) e sedes de empresas/holdings (7010, 6462) nos perfis de consolidação ou diversificação
+- Para empresas de serviços profissionais (contabilidade, advocacia, consultoria), inclua também: 62 (TI/software), 7020 (gestão), 7010 (sedes), 6462 (holdings)
+- Para empresas de tecnologia, inclua: 6311 (dados), 6319 (portais), 7020, 7010
+- Gere no mínimo 3 perfis e no máximo 5, cada um com pelo menos 3 prefixos CNAE diferentes
+- NÃO se limite a um único CNAE por perfil — compradores reais vêm de setores variados
+
+IMPORTANTE — RESPEITE A GEOGRAFIA:
+- Se o vendedor está em um estado específico, defina search_nationwide = false nos perfis de consolidação horizontal (concorrentes locais)
+- Apenas perfis de diversificação ou integração vertical devem ter search_nationwide = true
+- NUNCA defina search_nationwide = true para TODOS os perfis
+
 Retorne SOMENTE JSON válido, sem markdown.`;
 
         userPrompt = `Dados do vendedor:
