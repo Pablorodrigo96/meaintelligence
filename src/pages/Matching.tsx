@@ -342,6 +342,55 @@ export default function Matching() {
   const [enrichingMatch, setEnrichingMatch] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(20);
   const [webFilterMode, setWebFilterMode] = useState<"all" | "any">("all");
+  const [lushaEnrichingMatch, setLushaEnrichingMatch] = useState<string | null>(null);
+
+  const enrichWithLusha = async (match: MatchResult) => {
+    setLushaEnrichingMatch(match.id);
+    try {
+      const currentAnalysis = (() => { try { const s = (match.ai_analysis || "{}").trim().replace(/^```(?:json|javascript|typescript)?\s*\n?/, '').replace(/\n?```$/, ''); return JSON.parse(s); } catch { return {}; } })();
+      const decisionMakers = currentAnalysis.decision_makers || [];
+      
+      if (decisionMakers.length === 0) {
+        toast({ title: "Sem decisores", description: "Esta empresa não possui decisores identificados pelo Apollo. Execute o enriquecimento Apollo primeiro.", variant: "destructive" });
+        setLushaEnrichingMatch(null);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("lusha-enrich", {
+        body: {
+          company_name: match.companies?.name,
+          decision_makers: decisionMakers.map((dm: any) => ({
+            first_name: (dm.name || "").split(" ")[0],
+            last_name: (dm.name || "").split(" ").slice(1).join(" "),
+            company_name: match.companies?.name,
+            linkedin_url: dm.linkedin_url,
+            title: dm.title,
+          })),
+        },
+      });
+
+      if (error) throw error;
+
+      const enriched = {
+        ...currentAnalysis,
+        lusha_contacts: data.contacts || [],
+        lusha_enriched: true,
+      };
+      
+      await supabase.from("matches").update({
+        ai_analysis: JSON.stringify(enriched),
+      }).eq("id", match.id);
+
+      queryClient.invalidateQueries({ queryKey: ["matches"] });
+      const foundCount = (data.contacts || []).filter((c: any) => c.lusha_found).length;
+      toast({ title: "Lusha concluído", description: `${foundCount}/${decisionMakers.length} decisores enriquecidos com dados de contato.` });
+    } catch (e: any) {
+      console.error("Lusha enrichment error:", e);
+      toast({ title: "Erro Lusha", description: e.message || "Erro ao enriquecer com Lusha", variant: "destructive" });
+    } finally {
+      setLushaEnrichingMatch(null);
+    }
+  };
 
   // Buyer revenue field (Wizard Step 1)
   const [buyerRevenueBrl, setBuyerRevenueBrl] = useState<string>("");
@@ -915,8 +964,8 @@ export default function Matching() {
     return String(val);
   };
 
-  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean; apollo_enriched: boolean; employee_count: number | null; apollo_industry: string | null } => {
-    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null };
+  const parseAnalysis = (raw: string | null): { analysis: string; dimensions: MatchDimensions | null; dimension_explanations: DimensionExplanations | null; recommendation: string; strengths: string[]; weaknesses: string[]; ai_enriched: boolean; apollo_enriched: boolean; employee_count: number | null; apollo_industry: string | null; lusha_enriched: boolean; lusha_contacts: any[]; decision_makers: any[] } => {
+    if (!raw) return { analysis: "", dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null, lusha_enriched: false, lusha_contacts: [], decision_makers: [] };
     try {
       const cleanedRaw = stripCodeFences(raw);
       const parsed = JSON.parse(cleanedRaw);
@@ -931,9 +980,12 @@ export default function Matching() {
         apollo_enriched: parsed.apollo_enriched === true,
         employee_count: parsed.employee_count || null,
         apollo_industry: parsed.apollo_industry || null,
+        lusha_enriched: parsed.lusha_enriched === true,
+        lusha_contacts: parsed.lusha_contacts || [],
+        decision_makers: parsed.decision_makers || [],
       };
     } catch {
-      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null };
+      return { analysis: raw, dimensions: null, dimension_explanations: null, recommendation: "", strengths: [], weaknesses: [], ai_enriched: false, apollo_enriched: false, employee_count: null, apollo_industry: null, lusha_enriched: false, lusha_contacts: [], decision_makers: [] };
     }
   };
 
@@ -1966,11 +2018,15 @@ export default function Matching() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="criteria" className="gap-1 text-xs md:text-sm"><Target className="w-4 h-4" /><span className="hidden sm:inline">Critérios</span><span className="sm:hidden">Perfil</span></TabsTrigger>
           <TabsTrigger value="results" className="gap-1 text-xs md:text-sm">
             <Search className="w-4 h-4" /><span className="hidden sm:inline">Resultados</span><span className="sm:hidden">Match</span>
             {matches.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{matches.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="shortlist" className="gap-1 text-xs md:text-sm">
+            <Bookmark className="w-4 h-4" /><span className="hidden sm:inline">Shortlist</span><span className="sm:hidden">Short</span>
+            {matches.filter(m => m.status === "saved").length > 0 && <Badge variant="secondary" className="ml-1 text-[10px] bg-success/20 text-success">{matches.filter(m => m.status === "saved").length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1 text-xs md:text-sm"><BarChart3 className="w-4 h-4" /><span className="hidden sm:inline">Analytics</span><span className="sm:hidden">Stats</span></TabsTrigger>
         </TabsList>
@@ -3320,7 +3376,219 @@ export default function Matching() {
           )}
         </TabsContent>
 
-        {/* ========== TAB 3: ANALYTICS ========== */}
+        {/* ========== TAB 3: SHORTLIST ========== */}
+        <TabsContent value="shortlist" className="space-y-6 mt-6">
+          {(() => {
+            const shortlistMatches = matches.filter(m => m.status === "saved");
+            if (shortlistMatches.length === 0) {
+              return (
+                <Card className="py-16 flex flex-col items-center justify-center text-center">
+                  <Bookmark className="w-12 h-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-display font-semibold">Nenhuma empresa na Shortlist</h3>
+                  <p className="text-muted-foreground mt-1 max-w-sm">Marque empresas como "Shortlist" nos resultados para vê-las aqui.</p>
+                  <Button className="mt-4" onClick={() => setActiveTab("results")}><Search className="w-4 h-4 mr-2" />Ir para Resultados</Button>
+                </Card>
+              );
+            }
+            return (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-display font-semibold flex items-center gap-2">
+                      <Bookmark className="w-5 h-5 text-success" />
+                      Shortlist — {shortlistMatches.length} empresa{shortlistMatches.length > 1 ? "s" : ""}
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-0.5">Empresas selecionadas para enriquecimento premium com Lusha.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {shortlistMatches.map((m) => {
+                    const parsedData = parseAnalysis(m.ai_analysis);
+                    const { dimensions } = parsedData;
+                    const score = Number(m.compatibility_score) || 0;
+                    const contactInfo = (() => {
+                      try {
+                        const p = JSON.parse(stripCodeFences(m.ai_analysis || "{}"));
+                        return p.contact_info || p.contactInfo || null;
+                      } catch { return null; }
+                    })();
+
+                    return (
+                      <Card key={m.id} className="border-success/30 bg-success/5">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <CardTitle className="text-lg font-display flex items-center gap-2">
+                                {m.companies?.name || "Empresa"}
+                                <Badge className={`text-xs ${score >= 80 ? "bg-success/15 text-success border-success/30" : score >= 60 ? "bg-warning/15 text-warning border-warning/30" : "bg-destructive/15 text-destructive border-destructive/30"} border`}>
+                                  {score}%
+                                </Badge>
+                              </CardTitle>
+                              <CardDescription className="mt-1">
+                                {m.companies?.city && m.companies?.state ? `${m.companies.city}, ${m.companies.state}` : m.companies?.state || ""} 
+                                {m.companies?.sector ? ` · ${sectorLabel(m.companies.sector)}` : ""}
+                                {m.companies?.cnpj ? ` · CNPJ: ${m.companies.cnpj}` : ""}
+                              </CardDescription>
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {parsedData.apollo_enriched && (
+                                  <Badge className="text-[10px] bg-violet-500/15 text-violet-600 border-violet-500/30 border">
+                                    <Zap className="w-2.5 h-2.5 mr-0.5" />Apollo
+                                  </Badge>
+                                )}
+                                {parsedData.employee_count && parsedData.employee_count > 0 && (
+                                  <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
+                                    <Users className="w-2.5 h-2.5 mr-0.5" />{parsedData.employee_count} func.
+                                  </Badge>
+                                )}
+                                {parsedData.apollo_industry && (
+                                  <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                                    {parsedData.apollo_industry}
+                                  </Badge>
+                                )}
+                                {contactInfo && (
+                                  <Badge className="text-[10px] bg-primary/15 text-primary border-primary/30 border">
+                                    <UserCheck className="w-2.5 h-2.5 mr-0.5" />Enriquecida IA
+                                  </Badge>
+                                )}
+                                {dimensions?.web_validated && (
+                                  <Badge className="text-[10px] bg-success/15 text-success border-success/30 border">
+                                    <Globe className="w-2.5 h-2.5 mr-0.5" />Validada Web
+                                  </Badge>
+                                )}
+                                {parsedData.lusha_enriched && (
+                                  <Badge className="text-[10px] bg-emerald-500/15 text-emerald-600 border-emerald-500/30 border">
+                                    <Phone className="w-2.5 h-2.5 mr-0.5" />Lusha
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <Button
+                                size="sm"
+                                variant={parsedData.lusha_enriched ? "outline" : "default"}
+                                disabled={lushaEnrichingMatch === m.id}
+                                onClick={() => enrichWithLusha(m)}
+                                className="gap-1.5 text-xs"
+                              >
+                                {lushaEnrichingMatch === m.id ? (
+                                  <><Loader2 className="w-3.5 h-3.5 animate-spin" />Buscando...</>
+                                ) : parsedData.lusha_enriched ? (
+                                  <><RotateCcw className="w-3.5 h-3.5" />Re-enriquecer Lusha</>
+                                ) : (
+                                  <><Phone className="w-3.5 h-3.5" />Enriquecer com Lusha</>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {/* Analysis summary */}
+                          {parsedData.analysis && (
+                            <div className="text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+                              <p className="font-medium text-foreground mb-1">Análise IA</p>
+                              <p className="line-clamp-3">{parsedData.analysis}</p>
+                            </div>
+                          )}
+
+                          {/* Financial data row */}
+                          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                            {(() => {
+                              const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                              const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
+                              return (
+                                <>
+                                  {capital && <span><DollarSign className="w-3 h-3 inline mr-0.5" />Capital: {formatCurrency(capital)}</span>}
+                                  {cnae && <span className="font-mono">CNAE: {cnae}</span>}
+                                  {m.companies?.revenue && <span>Receita: {formatCurrency(m.companies.revenue)}</span>}
+                                  {m.companies?.ebitda && <span>EBITDA: {formatCurrency(m.companies.ebitda)}</span>}
+                                </>
+                              );
+                            })()}
+                          </div>
+
+                          {/* Decision makers from Apollo */}
+                          {parsedData.decision_makers.length > 0 && (
+                            <div>
+                              <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                                <Users className="w-4 h-4 text-violet-600" />
+                                Decisores ({parsedData.decision_makers.length})
+                              </p>
+                              <div className="grid gap-2 md:grid-cols-2">
+                                {parsedData.decision_makers.map((dm: any, idx: number) => {
+                                  // Find matching Lusha contact
+                                  const lushaContact = parsedData.lusha_contacts.find((lc: any) => 
+                                    lc.name?.toLowerCase() === dm.name?.toLowerCase() || 
+                                    (lc.name && dm.name && lc.name.split(" ")[0]?.toLowerCase() === dm.name.split(" ")[0]?.toLowerCase())
+                                  );
+                                  return (
+                                    <div key={idx} className={`rounded-lg border p-3 text-sm ${lushaContact?.lusha_found ? "border-emerald-500/30 bg-emerald-500/5" : "border-border"}`}>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="font-medium">{dm.name}</span>
+                                        {lushaContact?.lusha_found && (
+                                          <Badge className="text-[9px] bg-emerald-500/15 text-emerald-600 border-emerald-500/30 border">Lusha ✓</Badge>
+                                        )}
+                                      </div>
+                                      {dm.title && <p className="text-xs text-muted-foreground mb-1">{dm.title}</p>}
+                                      
+                                      {/* Lusha contact data */}
+                                      {lushaContact?.lusha_found && (
+                                        <div className="space-y-1 mt-2 pt-2 border-t border-border/50">
+                                          {lushaContact.phone_numbers?.map((ph: any, pi: number) => (
+                                            <a key={pi} href={`tel:${ph.number}`} className="flex items-center gap-1.5 text-xs text-emerald-600 hover:underline">
+                                              <Phone className="w-3 h-3" />{ph.number} <span className="text-muted-foreground">({ph.type})</span>
+                                            </a>
+                                          ))}
+                                          {lushaContact.email_addresses?.map((em: any, ei: number) => (
+                                            <a key={ei} href={`mailto:${em.email}`} className="flex items-center gap-1.5 text-xs text-primary hover:underline">
+                                              <Mail className="w-3 h-3" />{em.email} <span className="text-muted-foreground">({em.type})</span>
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                      
+                                      {/* LinkedIn from Apollo */}
+                                      {dm.linkedin_url && (
+                                        <a href={dm.linkedin_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1">
+                                          <Linkedin className="w-3 h-3" />LinkedIn
+                                        </a>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Existing enrichment contacts */}
+                          {contactInfo && (
+                            <div className="bg-muted/30 rounded-lg p-3 text-sm">
+                              <p className="font-medium mb-1 flex items-center gap-1"><UserCheck className="w-3.5 h-3.5 text-primary" />Contatos IA (Perplexity)</p>
+                              <div className="space-y-1 text-xs">
+                                {contactInfo.phones?.map((p: any, i: number) => (
+                                  <a key={i} href={`tel:${typeof p === "string" ? p : p.number}`} className="flex items-center gap-1 text-primary hover:underline">
+                                    <Phone className="w-3 h-3" />{typeof p === "string" ? p : p.number}
+                                  </a>
+                                ))}
+                                {contactInfo.emails?.map((e: any, i: number) => (
+                                  <a key={i} href={`mailto:${typeof e === "string" ? e : e.email}`} className="flex items-center gap-1 text-primary hover:underline">
+                                    <Mail className="w-3 h-3" />{typeof e === "string" ? e : e.email}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
+        </TabsContent>
+
+
         <TabsContent value="analytics" className="space-y-6 mt-6">
           {matches.length === 0 ? (
             <Card className="py-16 flex flex-col items-center justify-center text-center">
