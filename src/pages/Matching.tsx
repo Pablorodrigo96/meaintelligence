@@ -703,7 +703,7 @@ export default function Matching() {
             newCompanies.map(({ company }) => ({
               user_id: user!.id, name: company.name, cnpj: company.cnpj,
               sector: company.sector, state: company.state, city: company.city,
-              size: company.size, revenue: company.revenue, description: company.description,
+              size: company.size, revenue: company.revenue, ebitda: company.ebitda, description: company.description,
               status: "active", risk_level: "medium", source: "target_search" as any,
             }))
           ).select();
@@ -2920,11 +2920,21 @@ export default function Matching() {
                                       <Zap className="w-2.5 h-2.5 mr-0.5" />Apollo
                                     </Badge>
                                   )}
-                                  {parsedData.employee_count && parsedData.employee_count > 0 && (
-                                    <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
-                                      <Users className="w-2.5 h-2.5 mr-0.5" />{parsedData.employee_count} func.
-                                    </Badge>
-                                  )}
+                                   {(() => {
+                                     const estEmp = (() => {
+                                       if (parsedData.employee_count && parsedData.employee_count > 0) return { count: parsedData.employee_count, estimated: false };
+                                       const rev = m.companies?.revenue;
+                                       if (!rev || rev <= 0) return null;
+                                       const benchmarks: Record<string, number> = { "Technology": 500000, "Retail": 200000, "Manufacturing": 250000, "Healthcare": 180000, "Logistics": 200000, "Finance": 400000, "Education": 120000, "Real Estate": 250000, "Energy": 350000, "Telecom": 300000, "Agribusiness": 300000, "Other": 150000 };
+                                       const revPerEmp = benchmarks[m.companies?.sector || "Other"] || 150000;
+                                       return { count: Math.max(1, Math.round(rev / revPerEmp)), estimated: true };
+                                     })();
+                                     return estEmp && estEmp.count > 0 ? (
+                                       <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
+                                         <Users className="w-2.5 h-2.5 mr-0.5" />~{estEmp.count} func.{estEmp.estimated ? " (est.)" : ""}
+                                       </Badge>
+                                     ) : null;
+                                   })()}
                                   {parsedData.apollo_industry && (
                                     <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
                                       {parsedData.apollo_industry}
@@ -2939,34 +2949,26 @@ export default function Matching() {
                            </div>
                          </div>
 
-                         {/* Mini stats row */}
-                         <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
-                           {(() => {
-                             const capital = extractCapitalFromDescription(m.companies?.description ?? null);
-                             const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
-                             if (capital || cnae) {
-                               return (
-                                 <>
-                                   {capital && <span>Capital Social: {formatCurrency(capital)}</span>}
-                                   {capital && cnae && <span>·</span>}
-                                   {cnae && <span className="font-mono">CNAE: {cnae}</span>}
-                                   <span>·</span>
-                                 </>
-                               );
-                             }
-                             return (
-                               <>
-                                 <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
-                                 <span>·</span>
-                                 <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
-                                 <span>·</span>
-                               </>
-                             );
-                           })()}
-                           <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
-                             {completeness}% dados
-                           </Badge>
-                         </div>
+                          {/* Mini stats row */}
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
+                            <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
+                            <span>·</span>
+                            <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
+                            {(() => {
+                              const capital = extractCapitalFromDescription(m.companies?.description ?? null);
+                              const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
+                              return (
+                                <>
+                                  {capital && <><span>·</span><span>Capital: {formatCurrency(capital)}</span></>}
+                                  {cnae && <><span>·</span><span className="font-mono">CNAE: {cnae}</span></>}
+                                </>
+                              );
+                            })()}
+                            <span>·</span>
+                            <Badge variant={completeness >= 60 ? "secondary" : "outline"} className={`text-[10px] ${completeness < 40 ? "text-warning" : ""}`}>
+                              {completeness}% dados
+                            </Badge>
+                          </div>
 
                          {/* Synergy mini-bars */}
                          {dimensions && !isExpanded && (
@@ -3445,11 +3447,21 @@ export default function Matching() {
                                     <Zap className="w-2.5 h-2.5 mr-0.5" />Apollo
                                   </Badge>
                                 )}
-                                {parsedData.employee_count && parsedData.employee_count > 0 && (
-                                  <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
-                                    <Users className="w-2.5 h-2.5 mr-0.5" />{parsedData.employee_count} func.
-                                  </Badge>
-                                )}
+                                 {(() => {
+                                   const estEmp = (() => {
+                                     if (parsedData.employee_count && parsedData.employee_count > 0) return { count: parsedData.employee_count, estimated: false };
+                                     const rev = m.companies?.revenue;
+                                     if (!rev || rev <= 0) return null;
+                                     const benchmarks: Record<string, number> = { "Technology": 500000, "Retail": 200000, "Manufacturing": 250000, "Healthcare": 180000, "Logistics": 200000, "Finance": 400000, "Education": 120000, "Real Estate": 250000, "Energy": 350000, "Telecom": 300000, "Agribusiness": 300000, "Other": 150000 };
+                                     const revPerEmp = benchmarks[m.companies?.sector || "Other"] || 150000;
+                                     return { count: Math.max(1, Math.round(rev / revPerEmp)), estimated: true };
+                                   })();
+                                   return estEmp && estEmp.count > 0 ? (
+                                     <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-600">
+                                       <Users className="w-2.5 h-2.5 mr-0.5" />~{estEmp.count} func.{estEmp.estimated ? " (est.)" : ""}
+                                     </Badge>
+                                   ) : null;
+                                 })()}
                                 {parsedData.apollo_industry && (
                                   <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
                                     {parsedData.apollo_industry}
@@ -3502,6 +3514,8 @@ export default function Matching() {
 
                           {/* Financial data row */}
                           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                            <span>Receita: {formatCurrency(m.companies?.revenue ?? null)}</span>
+                            <span>EBITDA: {formatCurrency(m.companies?.ebitda ?? null)}</span>
                             {(() => {
                               const capital = extractCapitalFromDescription(m.companies?.description ?? null);
                               const cnae = extractCnaeFromDescription(m.companies?.description ?? null);
@@ -3509,8 +3523,6 @@ export default function Matching() {
                                 <>
                                   {capital && <span><DollarSign className="w-3 h-3 inline mr-0.5" />Capital: {formatCurrency(capital)}</span>}
                                   {cnae && <span className="font-mono">CNAE: {cnae}</span>}
-                                  {m.companies?.revenue && <span>Receita: {formatCurrency(m.companies.revenue)}</span>}
-                                  {m.companies?.ebitda && <span>EBITDA: {formatCurrency(m.companies.ebitda)}</span>}
                                 </>
                               );
                             })()}
