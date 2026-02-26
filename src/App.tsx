@@ -18,6 +18,7 @@ import Risk from "./pages/Risk";
 import PMI from "./pages/PMI";
 import AdminUsers from "./pages/AdminUsers";
 import AdminUsage from "./pages/AdminUsage";
+import AdminSettings from "./pages/AdminSettings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,6 +51,7 @@ const App = () => (
               <Route path="/risk" element={<Risk />} />
               <Route path="/admin/users" element={<AdminUsers />} />
               <Route path="/admin/usage" element={<AdminUsage />} />
+              <Route path="/admin/settings" element={<AdminSettings />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
