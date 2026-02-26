@@ -1,138 +1,183 @@
 
 
-## Plano: Receita por regime tributário (Simples Nacional) + EBITDA + LinkedIn dos sócios
+## Plano: Integrar Apollo.io para estimativa de faturamento baseada em funcionários
 
-### Correção do usuário
+### Contexto
 
-O campo `porte_empresa` da Receita Federal (00, 01, 03, 05) **não é** o regime tributário. Empresas LTDA, S/A, qualquer natureza jurídica podem estar no Simples Nacional. O que define é o campo `opcao_pelo_simples` na tabela `empresas` do banco da RF (valores 'S'/'N'/nulo).
+Atualmente o faturamento é estimado apenas pelo regime tributário (Simples/Presumido) e capital social — sem dado real de funcionários. A Apollo.io fornece `estimated_num_employees` por empresa, permitindo uma estimativa muito mais precisa: **Funcionários × Multiplicador Setorial**.
 
-Capital social **não serve** para estimar funcionários — são coisas completamente independentes.
+### Arquitetura proposta
+
+O fluxo de matching passará a ter uma etapa intermediária entre a busca na RF e o scoring:
+
+```text
+RF (national-search) → Apollo Enrichment → Scoring → Resultados
+     50M+ registros       Top 200 empresas     Buyer Fit Score
+```
 
 ### Alterações
 
-#### 1. `national-search/index.ts` — Query e estimativa de receita/EBITDA
+#### 1. Novo secret: `APOLLO_API_KEY`
 
-**Query**: Adicionar `em.opcao_pelo_simples` ao SELECT (linha 214), pois é esse campo que indica se a empresa está no Simples Nacional.
+Será necessário configurar a API key da Apollo.io como secret do projeto.
 
-**Nova função `estimateRevenue`**:
+#### 2. Nova Edge Function: `supabase/functions/apollo-enrich/index.ts`
 
-| Camada | Lógica |
-|--------|--------|
-| 1 — Regime tributário | Se `opcao_pelo_simples = 'S'` → fatura ≤ R$4.8M (teto legal do Simples). Estimar ~R$3.5M como média, ajustável por setor |
-| 2 — Presumido/Real | Se `opcao_pelo_simples != 'S'` (ou 'N'/nulo) → fatura > R$4.8M. Usar porte + setor para estimar faixa |
-| 3 — Ajuste por setor | Multiplicador setorial sobre capital social apenas para empresas fora do Simples (porte 05/Demais) |
+Função dedicada que recebe uma lista de empresas e retorna dados enriquecidos da Apollo:
 
-Nota: O teto legal do Simples é R$4.8M, mas considerando que muitos sonegam um pouco, usamos ~R$7M como teto prático conforme orientação do usuário.
+- **Endpoint**: `POST https://api.apollo.io/api/v1/mixed_people/search`
+- **Filtros**: `person_seniorities: ['owner', 'founder', 'c_suite', 'director']` para identificar decisores
+- **Dados capturados por empresa**:
+  - `organization.estimated_num_employees` (número de funcionários)
+  - `organization.industry` (setor Apollo)
+  - `organization.website_url` (website)
+  - `organization.linkedin_url` (LinkedIn da empresa)
+  - Nomes e cargos dos decisores encontrados
+- **Lógica de busca**: Para cada empresa, buscar pelo domínio do email (se disponível da RF) ou pelo nome da empresa + localização
+- **Rate limiting**: Processar em batches de 10, com delay de 500ms entre batches para respeitar limites da API
+- **Cálculo de faturamento**:
 
-**Nova função `estimateEbitda`**: `revenue * ebitda_margin_setor` usando benchmarks setoriais.
+| Setor Apollo | Multiplicador/funcionário |
+|-------------|--------------------------|
+| Technology / SaaS | R$500.000 |
+| Manufacturing / Industrial | R$400.000 |
+| Services / Retail | R$180.000 |
+| Outros | R$200.000 |
 
-**Mapping de retorno** (linhas 247-248): Substituir `capitalSocial * 2` por `estimateRevenue(row.opcao_pelo_simples, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial)` e `estimateEbitda(revenue, cnae)`.
+Fórmula: `revenue_apollo = estimated_num_employees × multiplicador_setor`
 
-#### 2. `company-enrich/index.ts` — LinkedIn dos sócios
+- **Retorno**: Lista de empresas com `revenue_apollo`, `employee_count`, `apollo_industry`, decisores encontrados
 
-- Trocar modelo `sonar` → `sonar-pro` (linha 140) para melhor precisão com citações
-- Adicionar Camada 3b: prompt dedicado por sócio para busca individual de LinkedIn
-- Fallback: se não encontrar perfil direto, gerar URL de busca LinkedIn pré-preenchida: `https://www.linkedin.com/search/results/people/?keywords=Nome+Empresa`
+#### 3. Atualizar `src/pages/Matching.tsx` — Novo Step entre busca e scoring
+
+Após o Step 2 (national-search) e antes do Step 3 (scoring), adicionar:
+
+**Step 2.5 — Apollo Enrichment** (linhas ~1077-1090):
+- Pegar os top 200 compradores (já deduplicados)
+- Chamar `apollo-enrich` com a lista de nomes/CNPJs/emails
+- Para empresas que a Apollo encontrar: substituir `revenue` pelo valor calculado (`employees × multiplicador`)
+- Para empresas sem match na Apollo: manter a estimativa atual (regime tributário)
+- Atualizar `progressStep` para mostrar progresso ao usuário
+
+**Step 3 — Scoring** (linha ~1092):
+- No cálculo de `capacity_fit`, usar `buyer.revenue` (que agora pode vir da Apollo) em vez de tentar reverter `capitalSocial` (linha 1092: `const capitalSocial = buyer.revenue ? buyer.revenue / 2 : null`)
+- Remover a linha 1092 que faz `revenue / 2` — isso era resquício da fórmula antiga `capital * 2`
+
+#### 4. Atualizar `national-search/index.ts` — Manter estimativa como fallback
+
+A estimativa por regime tributário (Simples/Presumido) continua como fallback para quando a Apollo não encontrar a empresa. Nenhuma alteração necessária neste arquivo.
 
 ### Detalhes técnicos
 
+**Edge Function `apollo-enrich/index.ts`:**
+
 ```typescript
-// Benchmarks setoriais
-const SECTOR_BENCHMARKS: Record<string, { rev_per_employee: number; ebitda_margin: number }> = {
-  "Technology":    { rev_per_employee: 500_000, ebitda_margin: 0.25 },
-  "Retail":        { rev_per_employee: 200_000, ebitda_margin: 0.05 },
-  "Manufacturing": { rev_per_employee: 250_000, ebitda_margin: 0.12 },
-  "Healthcare":    { rev_per_employee: 180_000, ebitda_margin: 0.15 },
-  "Logistics":     { rev_per_employee: 200_000, ebitda_margin: 0.08 },
-  "Finance":       { rev_per_employee: 400_000, ebitda_margin: 0.20 },
-  "Education":     { rev_per_employee: 120_000, ebitda_margin: 0.18 },
-  "Real Estate":   { rev_per_employee: 250_000, ebitda_margin: 0.15 },
-  "Energy":        { rev_per_employee: 350_000, ebitda_margin: 0.18 },
-  "Telecom":       { rev_per_employee: 300_000, ebitda_margin: 0.20 },
-  "Agribusiness":  { rev_per_employee: 300_000, ebitda_margin: 0.15 },
-  "Other":         { rev_per_employee: 150_000, ebitda_margin: 0.10 },
+// Multiplicadores por setor
+const APOLLO_SECTOR_MULTIPLIERS: Record<string, number> = {
+  "information technology and services": 500_000,
+  "computer software": 500_000,
+  "internet": 500_000,
+  "saas": 500_000,
+  "manufacturing": 400_000,
+  "industrial automation": 400_000,
+  "machinery": 400_000,
+  "retail": 180_000,
+  "consumer services": 180_000,
+  "hospitality": 180_000,
+  "food & beverages": 180_000,
 };
+const DEFAULT_MULTIPLIER = 200_000;
 
-function estimateRevenue(
-  opcaoSimples: string | null,
-  porte: string | null,
-  cnae: string | null,
-  capitalSocial: number | null
-): number | null {
-  const sector = mapCnaeToSector(cnae);
+// Para cada empresa, buscar na Apollo por nome + localização
+for (const company of companies) {
+  const searchBody = {
+    person_seniorities: ["owner", "founder", "c_suite", "director"],
+    organization_locations: [company.state ? `${company.state}, Brazil` : "Brazil"],
+    q_organization_name: company.name,
+    per_page: 5,
+  };
 
-  // Camada 1: Simples Nacional → teto prático R$7M
-  if (opcaoSimples === "S") {
-    // Média estimada com margem de sonegação
-    // Micro tende a faturar menos, EPP mais próximo do teto
-    const p = (porte || "").trim();
-    if (p === "01") return 1_500_000;   // Micro: ~R$1.5M média
-    if (p === "03") return 5_000_000;   // EPP: ~R$5M média
-    return 3_500_000;                   // Default Simples: ~R$3.5M
+  const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": APOLLO_API_KEY,
+    },
+    body: JSON.stringify(searchBody),
+  });
+
+  // Extrair org data do primeiro resultado
+  const org = data.people?.[0]?.organization;
+  if (org?.estimated_num_employees) {
+    const industry = (org.industry || "").toLowerCase();
+    const multiplier = APOLLO_SECTOR_MULTIPLIERS[industry] || DEFAULT_MULTIPLIER;
+    company.revenue_apollo = org.estimated_num_employees * multiplier;
+    company.employee_count = org.estimated_num_employees;
+    company.apollo_industry = org.industry;
   }
-
-  // Camada 2: Presumido/Real (fora do Simples) → piso R$7M
-  const p = (porte || "").trim();
-  if (p === "05" && capitalSocial && capitalSocial > 0) {
-    // Multiplicador setorial sobre capital social, com piso de R$7M
-    const multipliers: Record<string, number> = {
-      "Technology": 8, "Finance": 5, "Healthcare": 4,
-      "Retail": 6, "Manufacturing": 2.5, "Energy": 1.5,
-      "Real Estate": 1.5, "Logistics": 3, "Education": 4,
-      "Telecom": 2, "Agribusiness": 2, "Other": 3,
-    };
-    const mult = multipliers[sector] || 3;
-    return Math.max(capitalSocial * mult, 7_000_000);
-  }
-
-  // Porte desconhecido mas fora do Simples
-  if (capitalSocial && capitalSocial > 100_000) {
-    return Math.max(capitalSocial * 3, 7_000_000);
-  }
-
-  return 7_000_000; // Default fora do Simples
-}
-
-function estimateEbitda(revenue: number | null, cnae: string | null): number | null {
-  if (!revenue) return null;
-  const sector = mapCnaeToSector(cnae);
-  const bench = SECTOR_BENCHMARKS[sector] || SECTOR_BENCHMARKS["Other"];
-  return Math.round(revenue * bench.ebitda_margin);
 }
 ```
 
-Query atualizada (adicionar `opcao_pelo_simples`):
-```sql
-SELECT DISTINCT ON (e.cnpj_basico)
-  ...,
-  em.porte_empresa,
-  em.opcao_pelo_simples    -- NOVO
-FROM estabelecimentos e
-INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
-```
+**Matching.tsx — Step 2.5:**
 
-LinkedIn fallback por sócio:
 ```typescript
-// Para cada sócio sem LinkedIn, gerar URL de busca
-for (const owner of owners) {
-  if (!owner.linkedin) {
-    owner.linkedin = `https://www.linkedin.com/search/results/people/?keywords=${
-      encodeURIComponent(owner.name + " " + company_name)
-    }`;
-    owner.linkedin_is_search = true; // flag para UI diferenciar link direto vs busca
+// Step 2.5: Apollo enrichment for top candidates
+setProgressStep(2.5);
+const topCandidates = uniqueBuyers.slice(0, 200);
+const { data: apolloData } = await supabase.functions.invoke("apollo-enrich", {
+  body: { companies: topCandidates.map(c => ({
+    name: c.name, state: c.state, city: c.city,
+    email_domain: c.email?.split("@")[1] || null,
+  })) },
+});
+
+// Merge Apollo data back
+if (apolloData?.enriched) {
+  for (const enriched of apolloData.enriched) {
+    const match = topCandidates.find(c => c.name === enriched.name);
+    if (match && enriched.revenue_apollo) {
+      match.revenue = enriched.revenue_apollo; // Override with Apollo estimate
+      match.employee_count = enriched.employee_count;
+      match.apollo_enriched = true;
+    }
   }
 }
+```
+
+**Correção no scoring (linha 1092):**
+```typescript
+// ANTES (errado):
+const capitalSocial = buyer.revenue ? buyer.revenue / 2 : null;
+const actualCapital = capitalSocial ? capitalSocial : null;
+
+// DEPOIS (correto):
+const buyerRevenue = buyer.revenue || 0;
+// Capacity fit baseado em receita vs asking price
+let capacity_fit = 50;
+if (buyerRevenue > 0 && askingPrice > 0) {
+  const ratio = buyerRevenue / askingPrice;
+  if (ratio >= 10) capacity_fit = 95;
+  else if (ratio >= 5) capacity_fit = 85;
+  else if (ratio >= 2) capacity_fit = 70;
+  else if (ratio >= 1) capacity_fit = 55;
+  else capacity_fit = 30;
+}
+```
+
+### Config
+
+```toml
+[functions.apollo-enrich]
+verify_jwt = false
 ```
 
 ### Resumo de alterações
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `national-search/index.ts` | Adicionar `em.opcao_pelo_simples` ao SELECT |
-| `national-search/index.ts` | Nova função `estimateRevenue()` baseada em regime tributário (Simples S/N) |
-| `national-search/index.ts` | Nova função `estimateEbitda()` usando margem setorial |
-| `national-search/index.ts` | Tabela `SECTOR_BENCHMARKS` com rev_per_employee e ebitda_margin |
-| `company-enrich/index.ts` | Trocar `sonar` → `sonar-pro` |
-| `company-enrich/index.ts` | Prompt dedicado por sócio para LinkedIn |
-| `company-enrich/index.ts` | Fallback com URL de busca LinkedIn quando perfil não encontrado |
+| **Novo secret** | `APOLLO_API_KEY` — chave da API Apollo.io |
+| **Nova função** `apollo-enrich/index.ts` | Busca empresas na Apollo, calcula receita por funcionários × multiplicador setorial |
+| `supabase/config.toml` | Adicionar `[functions.apollo-enrich]` |
+| `src/pages/Matching.tsx` ~L1077 | Novo Step 2.5: chamar `apollo-enrich` nos top 200 antes do scoring |
+| `src/pages/Matching.tsx` ~L1092 | Corrigir `capacity_fit` para usar receita direta em vez de `revenue / 2` |
 
