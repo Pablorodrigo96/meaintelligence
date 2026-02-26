@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle, Shield, TrendingDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { logApiUsage } from "@/lib/logApiUsage";
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 export default function Risk() {
@@ -41,6 +42,7 @@ export default function Risk() {
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "risk", data: { company } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "risk");
       const r = data.result;
       await supabase.from("risk_assessments").insert({
         company_id: selectedCompany, user_id: user!.id,

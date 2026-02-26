@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      api_usage_logs: {
+        Row: {
+          action: string | null
+          created_at: string
+          id: string
+          service: string
+          tokens_used: number | null
+          user_id: string
+        }
+        Insert: {
+          action?: string | null
+          created_at?: string
+          id?: string
+          service: string
+          tokens_used?: number | null
+          user_id: string
+        }
+        Update: {
+          action?: string | null
+          created_at?: string
+          id?: string
+          service?: string
+          tokens_used?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       companies: {
         Row: {
           cash_flow: number | null

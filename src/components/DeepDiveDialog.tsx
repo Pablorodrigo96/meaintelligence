@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { logApiUsage } from "@/lib/logApiUsage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Intelligence {
@@ -130,6 +132,7 @@ function convergenceLabel(pct: number): { label: string; color: string } {
 // ─── Component ────────────────────────────────────────────────────────────────
 export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
   const [results, setResults] = useState<DeepDiveResult[] | null>(null);
@@ -154,6 +157,7 @@ export function DeepDiveDialog({ companies, open, onOpenChange }: DeepDiveDialog
       setResults(data.results || []);
       setAiAnalysis(data.ai_analysis || null);
       setProgressMsg("");
+      if (user?.id) logApiUsage(user.id, "deep-dive", "company-deep-dive");
     } catch (e: any) {
       toast({ title: "Erro no aprofundamento", description: e.message, variant: "destructive" });
       setProgressMsg("");

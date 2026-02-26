@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { FileText, Download, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { logApiUsage } from "@/lib/logApiUsage";
 
 const contractTypes = [
   { value: "nda", label: "Acordo de Não-Divulgação (NDA)" },
@@ -40,6 +41,7 @@ export default function Contracts() {
       const { data, error } = await supabase.functions.invoke("ai-analyze", { body: { type: "contract", data: { contractType: contractTypes.find((t) => t.value === contractType)?.label, parameters: params } } });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
+      if (user?.id) logApiUsage(user.id, "ai-analyze", "contract");
       const content = data.content;
       setPreview(content);
       await supabase.from("contracts").insert({ user_id: user!.id, contract_type: contractType, content, parameters: params as any });
