@@ -1,78 +1,138 @@
 
 
-## Diagnóstico: Por que O2 Inc e 4cinco nao apareceram + Timeout
+## Plano: Receita por regime tributário (Simples Nacional) + EBITDA + LinkedIn dos sócios
 
-### Problemas identificados
+### Correção do usuário
 
-**1. Timeout na `national-search` (erro principal na screenshot)**
+O campo `porte_empresa` da Receita Federal (00, 01, 03, 05) **não é** o regime tributário. Empresas LTDA, S/A, qualquer natureza jurídica podem estar no Simples Nacional. O que define é o campo `opcao_pelo_simples` na tabela `empresas` do banco da RF (valores 'S'/'N'/nulo).
 
-O erro "cancelando a instrução devido ao tempo limite da instrução" ocorre porque a query SQL tem 2 subqueries correlacionadas (`num_filiais` e `num_ufs`) que fazem scan completo na tabela de 50M+ registros para CADA linha retornada. Com `LIMIT 2000`, isso significa 2000 x 2 subqueries = 4000 scans extras.
+Capital social **não serve** para estimar funcionários — são coisas completamente independentes.
 
-**2. Cobertura CNAE limitada nos perfis de compradores**
+### Alterações
 
-A busca que rodou para a Vispe gerou perfis com CNAE `6920` (contabilidade/consultoria). Se O2 Inc e 4cinco estão registradas sob CNAEs diferentes (ex: `7020` gestão empresarial, `6201` software, `7319` marketing), elas nunca seriam encontradas. O sistema depende 100% dos prefixos CNAE gerados pela IA.
+#### 1. `national-search/index.ts` — Query e estimativa de receita/EBITDA
 
-**3. Sem busca por nome**
+**Query**: Adicionar `em.opcao_pelo_simples` ao SELECT (linha 214), pois é esse campo que indica se a empresa está no Simples Nacional.
 
-Atualmente não existe forma de buscar uma empresa específica por nome na base nacional. Se o usuário sabe que "O2 Inc" é um comprador relevante, não consegue adicioná-la diretamente.
+**Nova função `estimateRevenue`**:
 
-### Plano de correção
+| Camada | Lógica |
+|--------|--------|
+| 1 — Regime tributário | Se `opcao_pelo_simples = 'S'` → fatura ≤ R$4.8M (teto legal do Simples). Estimar ~R$3.5M como média, ajustável por setor |
+| 2 — Presumido/Real | Se `opcao_pelo_simples != 'S'` (ou 'N'/nulo) → fatura > R$4.8M. Usar porte + setor para estimar faixa |
+| 3 — Ajuste por setor | Multiplicador setorial sobre capital social apenas para empresas fora do Simples (porte 05/Demais) |
 
-#### 1. Otimizar `national-search` para eliminar timeout
+Nota: O teto legal do Simples é R$4.8M, mas considerando que muitos sonegam um pouco, usamos ~R$7M como teto prático conforme orientação do usuário.
 
-Remover as subqueries correlacionadas `num_filiais` e `num_ufs` da query principal. Essas informações são "nice to have" mas causam timeout em bases grandes. Substituir por valores default (1) e calcular sob demanda apenas no enriquecimento individual.
+**Nova função `estimateEbitda`**: `revenue * ebitda_margin_setor` usando benchmarks setoriais.
 
-**Arquivo**: `supabase/functions/national-search/index.ts`
-- Remover as 2 subqueries `(SELECT COUNT(*) FROM estabelecimentos e2 ...)` e `(SELECT COUNT(DISTINCT e3.uf) ...)`
-- Simplificar o SELECT para usar apenas joins diretos
-- Adicionar `statement_timeout` de 25s na conexão para evitar travamento
+**Mapping de retorno** (linhas 247-248): Substituir `capitalSocial * 2` por `estimateRevenue(row.opcao_pelo_simples, row.porte_empresa, row.cnae_fiscal_principal, capitalSocial)` e `estimateEbitda(revenue, cnae)`.
 
-#### 2. Ampliar cobertura CNAE no `parse-seller-intent`
+#### 2. `company-enrich/index.ts` — LinkedIn dos sócios
 
-Atualizar o prompt do `ai-analyze` para o tipo `parse-seller-intent` para gerar perfis com CNAEs mais amplos, incluindo:
-- Consultoria de gestão (7020)
-- Atividades de sedes de empresas (7010)
-- Software/TI (62xx) para compradores tech-enabled
-- Holdings (6462)
+- Trocar modelo `sonar` → `sonar-pro` (linha 140) para melhor precisão com citações
+- Adicionar Camada 3b: prompt dedicado por sócio para busca individual de LinkedIn
+- Fallback: se não encontrar perfil direto, gerar URL de busca LinkedIn pré-preenchida: `https://www.linkedin.com/search/results/people/?keywords=Nome+Empresa`
 
-**Arquivo**: `supabase/functions/ai-analyze/index.ts` (bloco parse-seller-intent)
+### Detalhes técnicos
 
-#### 3. Respeitar filtros geográficos corretamente
+```typescript
+// Benchmarks setoriais
+const SECTOR_BENCHMARKS: Record<string, { rev_per_employee: number; ebitda_margin: number }> = {
+  "Technology":    { rev_per_employee: 500_000, ebitda_margin: 0.25 },
+  "Retail":        { rev_per_employee: 200_000, ebitda_margin: 0.05 },
+  "Manufacturing": { rev_per_employee: 250_000, ebitda_margin: 0.12 },
+  "Healthcare":    { rev_per_employee: 180_000, ebitda_margin: 0.15 },
+  "Logistics":     { rev_per_employee: 200_000, ebitda_margin: 0.08 },
+  "Finance":       { rev_per_employee: 400_000, ebitda_margin: 0.20 },
+  "Education":     { rev_per_employee: 120_000, ebitda_margin: 0.18 },
+  "Real Estate":   { rev_per_employee: 250_000, ebitda_margin: 0.15 },
+  "Energy":        { rev_per_employee: 350_000, ebitda_margin: 0.18 },
+  "Telecom":       { rev_per_employee: 300_000, ebitda_margin: 0.20 },
+  "Agribusiness":  { rev_per_employee: 300_000, ebitda_margin: 0.15 },
+  "Other":         { rev_per_employee: 150_000, ebitda_margin: 0.10 },
+};
 
-Na busca de compradores (linhas 1053-1063 do Matching.tsx), o campo `target_state` é passado condicionalmente com `search_nationwide`. Garantir que quando o usuário não marca "nacional", o estado do vendedor é respeitado; e quando marca, vai sem filtro de estado.
+function estimateRevenue(
+  opcaoSimples: string | null,
+  porte: string | null,
+  cnae: string | null,
+  capitalSocial: number | null
+): number | null {
+  const sector = mapCnaeToSector(cnae);
 
-Atualmente isso já funciona corretamente no código (linha 1058), mas o perfil da IA pode definir `search_nationwide: true` ignorando a intenção do usuário. Corrigir para que o estado do vendedor seja sempre enviado quando não há filtro explícito.
+  // Camada 1: Simples Nacional → teto prático R$7M
+  if (opcaoSimples === "S") {
+    // Média estimada com margem de sonegação
+    // Micro tende a faturar menos, EPP mais próximo do teto
+    const p = (porte || "").trim();
+    if (p === "01") return 1_500_000;   // Micro: ~R$1.5M média
+    if (p === "03") return 5_000_000;   // EPP: ~R$5M média
+    return 3_500_000;                   // Default Simples: ~R$3.5M
+  }
 
-**Arquivo**: `src/pages/Matching.tsx` linha 1058
+  // Camada 2: Presumido/Real (fora do Simples) → piso R$7M
+  const p = (porte || "").trim();
+  if (p === "05" && capitalSocial && capitalSocial > 0) {
+    // Multiplicador setorial sobre capital social, com piso de R$7M
+    const multipliers: Record<string, number> = {
+      "Technology": 8, "Finance": 5, "Healthcare": 4,
+      "Retail": 6, "Manufacturing": 2.5, "Energy": 1.5,
+      "Real Estate": 1.5, "Logistics": 3, "Education": 4,
+      "Telecom": 2, "Agribusiness": 2, "Other": 3,
+    };
+    const mult = multipliers[sector] || 3;
+    return Math.max(capitalSocial * mult, 7_000_000);
+  }
+
+  // Porte desconhecido mas fora do Simples
+  if (capitalSocial && capitalSocial > 100_000) {
+    return Math.max(capitalSocial * 3, 7_000_000);
+  }
+
+  return 7_000_000; // Default fora do Simples
+}
+
+function estimateEbitda(revenue: number | null, cnae: string | null): number | null {
+  if (!revenue) return null;
+  const sector = mapCnaeToSector(cnae);
+  const bench = SECTOR_BENCHMARKS[sector] || SECTOR_BENCHMARKS["Other"];
+  return Math.round(revenue * bench.ebitda_margin);
+}
+```
+
+Query atualizada (adicionar `opcao_pelo_simples`):
+```sql
+SELECT DISTINCT ON (e.cnpj_basico)
+  ...,
+  em.porte_empresa,
+  em.opcao_pelo_simples    -- NOVO
+FROM estabelecimentos e
+INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
+```
+
+LinkedIn fallback por sócio:
+```typescript
+// Para cada sócio sem LinkedIn, gerar URL de busca
+for (const owner of owners) {
+  if (!owner.linkedin) {
+    owner.linkedin = `https://www.linkedin.com/search/results/people/?keywords=${
+      encodeURIComponent(owner.name + " " + company_name)
+    }`;
+    owner.linkedin_is_search = true; // flag para UI diferenciar link direto vs busca
+  }
+}
+```
 
 ### Resumo de alterações
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `national-search/index.ts` | Remover subqueries `num_filiais`/`num_ufs`, adicionar `statement_timeout` |
-| `ai-analyze/index.ts` | Ampliar CNAEs no prompt `parse-seller-intent` (7020, 7010, 62, 6462) |
-| `Matching.tsx` linha 1058 | Garantir que estado do vendedor seja respeitado quando `search_nationwide` = false |
-
-### Detalhes técnicos
-
-A query otimizada ficará:
-```sql
-SELECT DISTINCT ON (e.cnpj_basico)
-  e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv AS cnpj_completo,
-  e.cnpj_basico, e.nome_fantasia, e.cnae_fiscal_principal,
-  e.uf, e.municipio, e.situacao_cadastral,
-  em.razao_social, em.capital_social, em.porte_empresa
-FROM estabelecimentos e
-INNER JOIN empresas em ON em.cnpj_basico = e.cnpj_basico
-WHERE ...
-ORDER BY e.cnpj_basico, ...
-LIMIT ...
-```
-
-Sem as subqueries, a query deve rodar em 2-5s em vez de dar timeout.
-
-O `statement_timeout` será configurado na conexão:
-```ts
-await client.queryObject("SET statement_timeout = '25s'");
-```
+| `national-search/index.ts` | Adicionar `em.opcao_pelo_simples` ao SELECT |
+| `national-search/index.ts` | Nova função `estimateRevenue()` baseada em regime tributário (Simples S/N) |
+| `national-search/index.ts` | Nova função `estimateEbitda()` usando margem setorial |
+| `national-search/index.ts` | Tabela `SECTOR_BENCHMARKS` com rev_per_employee e ebitda_margin |
+| `company-enrich/index.ts` | Trocar `sonar` → `sonar-pro` |
+| `company-enrich/index.ts` | Prompt dedicado por sócio para LinkedIn |
+| `company-enrich/index.ts` | Fallback com URL de busca LinkedIn quando perfil não encontrado |
 
