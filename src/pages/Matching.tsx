@@ -348,10 +348,19 @@ export default function Matching() {
     setLushaEnrichingMatch(match.id);
     try {
       const currentAnalysis = (() => { try { const s = (match.ai_analysis || "{}").trim().replace(/^```(?:json|javascript|typescript)?\s*\n?/, '').replace(/\n?```$/, ''); return JSON.parse(s); } catch { return {}; } })();
-      const decisionMakers = currentAnalysis.decision_makers || [];
+      let decisionMakers = currentAnalysis.decision_makers || [];
+      
+      // Fallback: usar sócios do contact_info se não houver decisores Apollo
+      if (decisionMakers.length === 0 && currentAnalysis.contact_info?.owners?.length > 0) {
+        decisionMakers = currentAnalysis.contact_info.owners.map((owner: any) => ({
+          name: owner.name,
+          title: owner.role || "Sócio",
+          linkedin_url: owner.linkedin || null,
+        }));
+      }
       
       if (decisionMakers.length === 0) {
-        toast({ title: "Sem decisores", description: "Esta empresa não possui decisores identificados pelo Apollo. Execute o enriquecimento Apollo primeiro.", variant: "destructive" });
+        toast({ title: "Sem decisores", description: "Esta empresa não possui decisores ou sócios identificados. Execute o enriquecimento de contato primeiro.", variant: "destructive" });
         setLushaEnrichingMatch(null);
         return;
       }
