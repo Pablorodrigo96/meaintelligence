@@ -1086,20 +1086,49 @@ export default function Matching() {
 
       if (uniqueBuyers.length === 0) throw new Error("Nenhum comprador potencial encontrado. Tente ajustar os dados do vendedor.");
 
+      // Step 2.5: Apollo enrichment for top candidates
+      setProgressStep(2.5);
+      try {
+        const topCandidates = uniqueBuyers.slice(0, 200);
+        const { data: apolloData } = await supabase.functions.invoke("apollo-enrich", {
+          body: { companies: topCandidates.map((c: any) => ({
+            name: c.name,
+            state: c.state,
+            city: c.city,
+            email_domain: c.email?.split("@")[1] || null,
+          })) },
+        });
+
+        if (apolloData?.enriched) {
+          for (const enriched of apolloData.enriched) {
+            const match = topCandidates.find((c: any) => c.name === enriched.name);
+            if (match && enriched.revenue_apollo) {
+              match.revenue = enriched.revenue_apollo;
+              match.employee_count = enriched.employee_count;
+              match.apollo_enriched = true;
+              if (enriched.decision_makers?.length) {
+                match.decision_makers = enriched.decision_makers;
+              }
+            }
+          }
+        }
+      } catch (apolloErr) {
+        console.error("Apollo enrichment failed, continuing with existing data:", apolloErr);
+      }
+
       // Step 3: Score buyers (Buyer Fit Score)
       setProgressStep(3);
       const scored = uniqueBuyers.map((buyer: any) => {
-        const capitalSocial = buyer.revenue ? buyer.revenue / 2 : null; // reverse of revenue = capital * 2
-        const actualCapital = capitalSocial ? capitalSocial : null;
+        const buyerRevenue = buyer.revenue || 0;
 
         // Capacity Fit: can the buyer afford the asking price?
         let capacity_fit = 50;
-        if (actualCapital && askingPrice > 0) {
-          const ratio = actualCapital / askingPrice;
-          if (ratio >= 5) capacity_fit = 95;
-          else if (ratio >= 3) capacity_fit = 85;
-          else if (ratio >= 1.5) capacity_fit = 70;
-          else if (ratio >= 0.5) capacity_fit = 55;
+        if (buyerRevenue > 0 && askingPrice > 0) {
+          const ratio = buyerRevenue / askingPrice;
+          if (ratio >= 10) capacity_fit = 95;
+          else if (ratio >= 5) capacity_fit = 85;
+          else if (ratio >= 2) capacity_fit = 70;
+          else if (ratio >= 1) capacity_fit = 55;
           else capacity_fit = 30;
         }
 
